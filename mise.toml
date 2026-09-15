@@ -1,0 +1,8 @@
+[tools]
+python = "3.12"
+
+[tasks]
+setup = "pip install -r requirements.txt"
+db-init = "python scripts/init_db.py"
+db-seed = "python scripts/seed_db.py"
+dev = "streamlit run app/main.py"
