@@ -4,7 +4,8 @@ services:
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run app/main.py --server.port $PORT --server.address 0.0.0.0
+    # Encadenamos los scripts con && antes de iniciar Streamlit
+    startCommand: python scripts/init_db.py && python scripts/seed_db.py && streamlit run app/main.py --server.port $PORT --server.address 0.0.0.0
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
