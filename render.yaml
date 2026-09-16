@@ -6,6 +6,8 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: streamlit run app/main.py --server.port $PORT --server.address 0.0.0.0
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
       - key: DATABASE_URL
         fromDatabase:
           name: control-documental-db
