@@ -1,4 +1,5 @@
 import datetime
+import os
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, DateTime
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker, backref
 
@@ -50,8 +51,17 @@ class ExpedienteDocumento(Base):
 
     participante = relationship("Participante", back_populates="documentos")
 
-# Configuración SQLite local (Preparado para cambiar a PostgreSQL mediante env vars después)
-engine = create_engine("sqlite:///app_database.sqlite3", echo=False)
+# Configuración de Conexión Dinámica (Render PostgreSQL o Local SQLite)
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if DATABASE_URL:
+    # Corrección clave: Render usa 'postgres://' pero SQLAlchemy moderno exige 'postgresql://'
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    engine = create_engine(DATABASE_URL, echo=False)
+else:
+    engine = create_engine("sqlite:///app_database.sqlite3", echo=False)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db():

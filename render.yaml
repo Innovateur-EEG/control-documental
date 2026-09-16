@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: control-documental-web
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app/main.py --server.port $PORT --server.address 0.0.0.0
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: control-documental-db
+          property: connectionString
+
+databases:
+  - name: control-documental-db
+    plan: free
+    databaseName: controldb
+    user: dbuser
