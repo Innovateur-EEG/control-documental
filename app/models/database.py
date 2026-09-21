@@ -119,6 +119,19 @@ class DocumentoExpediente(Base):
 
     participacion = relationship("Participacion", back_populates="documentos")
 
+# ==========================================
+# PILAR 4: GESTOR DINÁMICO DE PLANTILLAS
+# ==========================================
+class PlantillaFormato(Base):
+    """Almacena la metadata y reglas de firma de cada documento que conforma el paquete"""
+    __tablename__ = 'plantillas_formato'
+    id = Column(Integer, primary_key=True)
+    nombre = Column(String, nullable=False)
+    roles_aplica = Column(JSON, default=[]) # Lista de roles que deben firmar este formato (Ej. ["Fideicomitente", "Apoderado"])
+    paginas_totales = Column(Integer, nullable=False, default=1)
+    rubricar_todas = Column(String, default="✅ Sí")
+    firmas_json = Column(JSON, default=[]) # Contiene [{"pag_formato": 2, "tipo_firma": "Firma Simple"}]
+    ruta_plantilla_word = Column(String, nullable=True) # Para futura integración con Supabase Storage
 
 # ==========================================
 # CONFIGURACIÓN DE BASE DE DATOS

@@ -5,6 +5,7 @@
 import sys
 import os
 import io
+import zipfile
 import streamlit as st
 import pandas as pd
 from docxtpl import DocxTemplate
@@ -13,7 +14,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.models.database import(
     SessionLocal, Usuario, Proyecto, Persona,
-    Catalogo, Participacion, JerarquiaParticipacion, DocumentoExpediente
+    Catalogo, Participacion, JerarquiaParticipacion, DocumentoExpediente,
+    PlantillaFormato
 )
 
 from app.utils.auth import verificar_password, generar_hash
@@ -104,7 +106,8 @@ def dashboard_principal():
     st.title("Panel de Control Principal")
     
     if st.session_state['tipo_usuario'] in ["SuperAdmin", "Admin"]:
-        tabs = st.tabs(["📊 Tablero de Control", "📁 Proyectos", "👥 Personas", "⚙️ Catálogos", "🔗 Asignaciones y Jerarquías", "🔐 Accesos Web"])
+        tabs = st.tabs(["📊 Tablero de Control", "📄 Plantillas", "📁 Proyectos",
+        "👥 Personas", "⚙️ Catálogos", "🔗 Asignaciones y Jerarquías", "🔐 Accesos Web"])
         
         # --- TABLERO DE AVANCE ---
         with tabs[0]:
@@ -200,9 +203,94 @@ def dashboard_principal():
                     st.info("No hay datos para exportar.")
 
             db.close()
+        # --- GESTOR DINÁMICO DE PLANTILLAS ---
+        with tabs[1]:
+            st.subheader("Gestor Dinámico de Plantillas")
+            st.write("Configure los documentos individuales (Word/Excel), a quiénes aplican y dónde deben firmar.")
+            
+            db = get_db_session()
+            roles_disponibles = [c.valor for c in db.query(Catalogo).filter_by(categoria="Rol_Participacion").all()]
+            
+            with st.expander("➕ Subir y Crear Nueva Plantilla"):
+                with st.form("form_nueva_plantilla"):
+                    nombre_tpl = st.text_input("Nombre del Formato (Ej. Declaración de Entidad)")
+                    roles_sel = st.multiselect("Este formato aplica para los Roles:", options=roles_disponibles)
+                    
+                    # Carga del archivo físico
+                    archivo_tpl = st.file_uploader("Subir Archivo de Plantilla (.docx, .xlsx)", type=["docx", "xlsx"])
+                    
+                    col_p1, col_p2 = st.columns(2)
+                    paginas_tot = col_p1.number_input("Páginas Totales del Formato", min_value=1, step=1)
+                    rubricar = col_p2.selectbox("¿Rubricar todas las páginas?", ["✅ Sí", "❌ No"])
+                    
+                    if st.form_submit_button("Subir y Crear Plantilla"):
+                        if nombre_tpl and roles_sel and archivo_tpl:
+                            # 1. Guardar el archivo físicamente en el servidor
+                            os.makedirs("app/templates", exist_ok=True)
+                            ruta_guardado = f"app/templates/{archivo_tpl.name}"
+                            with open(ruta_guardado, "wb") as f:
+                                f.write(archivo_tpl.getbuffer())
+                                
+                            # 2. Registrar en la base de datos
+                            nueva_tpl = PlantillaFormato(
+                                nombre=nombre_tpl,
+                                roles_aplica=roles_sel,
+                                paginas_totales=paginas_tot,
+                                rubricar_todas=rubricar,
+                                firmas_json=[],
+                                ruta_plantilla_word=ruta_guardado
+                            )
+                            db.add(nueva_tpl)
+                            db.commit()
+                            st.success("Plantilla creada exitosamente. Configura las firmas abajo.")
+                            st.rerun()
+                        else:
+                            st.error("El nombre, los roles y el archivo son obligatorios.")
+                            
+            # Listar y editar plantillas existentes (Mantenemos tu código anterior del st.data_editor aquí)
+            plantillas = db.query(PlantillaFormato).all()
+            if plantillas:
+                st.write("**Configuración de Firmas por Documento:**")
+                for tpl in plantillas:
+                    with st.expander(f"📄 {tpl.nombre} (Aplica a: {', '.join(tpl.roles_aplica)})", expanded=True):
+                        st.caption(f"Archivo: {tpl.ruta_plantilla_word} | Longitud: {tpl.paginas_totales} págs.")
+                        # ... [Mantén aquí todo tu código actual del st.data_editor y el guardado de firmas] ...
+                        
+                        if tpl.firmas_json:
+                            df_firmas = pd.DataFrame(tpl.firmas_json)
+                        else:
+                            df_firmas = pd.DataFrame(columns=["pag_formato", "tipo_firma"])
+                        
+                        df_editado = st.data_editor(
+                            df_firmas,
+                            num_rows="dynamic",
+                            column_config={
+                                "pag_formato": st.column_config.NumberColumn("Página (dentro de este formato)", min_value=1, max_value=tpl.paginas_totales, step=1, required=True),
+                                "tipo_firma": st.column_config.SelectboxColumn("Tipo de Firma", options=["Firma Simple", "Nombre y Firma", "Nombre, Firma y Huella", "Solo Rúbrica"], required=True)
+                            },
+                            key=f"editor_firmas_{tpl.id}",
+                            use_container_width=True
+                        )
+                        
+                        col_a, col_b, col_c = st.columns([2, 1, 1])
+                        with col_a:
+                            nuevos_roles = st.multiselect("Modificar Roles", options=roles_disponibles, default=tpl.roles_aplica, key=f"roles_{tpl.id}")
+                        with col_b:
+                            nueva_pag = st.number_input("Modificar Páginas", min_value=1, value=tpl.paginas_totales, key=f"pags_{tpl.id}")
+                        with col_c:
+                            st.write("") 
+                            st.write("")
+                            if st.button("💾 Guardar Cambios", key=f"btn_save_{tpl.id}"):
+                                tpl.roles_aplica = nuevos_roles
+                                tpl.paginas_totales = nueva_pag
+                                tpl.firmas_json = df_editado.to_dict(orient="records")
+                                db.commit()
+                                st.success("Configuración actualizada.")
+                                st.rerun()
+            db.close()
             
         # --- GESTIÓN DE PROYECTOS ---
-        with tabs[1]:
+        with tabs[2]:
             st.subheader("Gestión de Proyectos")
             # ... (tu código actual de Proyectos)
             with st.expander("➕ Crear Nuevo Proyecto"):
@@ -222,7 +310,7 @@ def dashboard_principal():
             db.close()
 
         # --- CATÁLOGO MAESTRO ---
-        with tabs[2]:
+        with tabs[3]:
             st.subheader("Catálogo Maestro de Personas")
             # ... (tu código actual de Personas)
             with st.expander("➕ Registrar Nueva Persona"):
@@ -245,7 +333,7 @@ def dashboard_principal():
             db.close()
 
         # --- VARIABLES DE SISTEMA ---
-        with tabs[3]:
+        with tabs[4]:
             st.subheader("Configuración de Variables del Sistema")
             # ... (tu código actual de Catálogos)
             db = get_db_session()
@@ -265,7 +353,7 @@ def dashboard_principal():
             db.close()
 
         # --- EXPEDIENTES ---
-        with tabs[4]:
+        with tabs[5]:
             st.subheader("Construcción del Expediente")
             db = get_db_session()
             
@@ -327,7 +415,7 @@ def dashboard_principal():
             db.close()
 
         # --- ACCESOS WEB PARA GESTORES ---
-        with tabs[5]:
+        with tabs[6]:
             st.subheader("Otorgar Acceso a Usuarios Operativos")
             st.write("Vincula un correo electrónico con una Persona del catálogo. Si el correo no existe, el sistema le creará una cuenta temporal.")
             db = get_db_session()
@@ -422,7 +510,7 @@ def dashboard_principal():
                                 st.success("Datos guardados en el expediente.")
                                 st.rerun()
 
-                        # --- GENERACIÓN DE FORMATOS, INSTRUCCIONES Y TRAZABILIDAD ---
+                        # --- GENERACIÓN DE PAQUETE ZIP E INSTRUCCIONES ---
                         st.divider()
                         st.write("📄 **Gestión del Paquete Documental**")
                         
@@ -431,6 +519,12 @@ def dashboard_principal():
                             tipo_documento="Paquete Unificado"
                         ).first()
                         
+                        # Obtenemos las plantillas que aplican a este rol (Filtrado seguro en memoria)
+                        plantillas_aplicables = [
+                            tpl for tpl in db.query(PlantillaFormato).all() 
+                            if tpl.roles_aplica and part.rol in tpl.roles_aplica
+                        ]
+
                         col_izq, col_der = st.columns([1, 1])
                         
                         with col_izq:
@@ -439,138 +533,119 @@ def dashboard_principal():
                             else:
                                 st.warning("Estatus: **No generado**")
                                 
-                            if st.button(f"Generar Paquete Documental", key=f"btn_gen_{part.id}"):
-                                context = {"nombre": part.persona.razon_social_nombre, "rfc": part.persona.rfc or "", **datos_actuales}
-                                doc = DocxTemplate("app/templates/formato_base.docx")
-                                doc.render(context)
-                                bio = io.BytesIO()
-                                doc.save(bio)
-                                st.session_state[f'doc_bytes_{part.id}'] = bio.getvalue()
-                                
-                                if not doc_exp:
-                                    nuevo_doc = DocumentoExpediente(
-                                        participacion_id=part.id,
-                                        categoria_documento="Paquete",
-                                        tipo_documento="Paquete Unificado",
-                                        estatus="Generado"
-                                    )
-                                    db.add(nuevo_doc)
-                                else:
-                                    doc_exp.estatus = "Actualizado"
-                                db.commit()
-                                st.rerun()
-
-                            if doc_exp or f'doc_bytes_{part.id}' in st.session_state:
-                                if f'doc_bytes_{part.id}' not in st.session_state:
+                            if not plantillas_aplicables:
+                                st.error("No hay formatos configurados para este rol.")
+                            else:
+                                if st.button(f"Generar Paquete (.zip)", key=f"btn_gen_{part.id}"):
                                     context = {"nombre": part.persona.razon_social_nombre, "rfc": part.persona.rfc or "", **datos_actuales}
-                                    doc = DocxTemplate("app/templates/formato_base.docx")
-                                    doc.render(context)
-                                    bio = io.BytesIO()
-                                    doc.save(bio)
-                                    st.session_state[f'doc_bytes_{part.id}'] = bio.getvalue()
+                                    
+                                    # 1. Crear el ZIP en memoria
+                                    zip_buffer = io.BytesIO()
+                                    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                                        for tpl in plantillas_aplicables:
+                                            if tpl.ruta_plantilla_word and os.path.exists(tpl.ruta_plantilla_word):
+                                                extension = os.path.splitext(tpl.ruta_plantilla_word)[1].lower()
+                                                
+                                                if extension == ".docx":
+                                                    # Compilar Word con Jinja2
+                                                    doc = DocxTemplate(tpl.ruta_plantilla_word)
+                                                    doc.render(context)
+                                                    doc_io = io.BytesIO()
+                                                    doc.save(doc_io)
+                                                    zip_file.writestr(f"{tpl.nombre}.docx", doc_io.getvalue())
+                                                else:
+                                                    # Si es Excel u otro, simplemente añadirlo al ZIP
+                                                    with open(tpl.ruta_plantilla_word, "rb") as f:
+                                                        zip_file.writestr(f"{tpl.nombre}{extension}", f.read())
+                                    
+                                    zip_buffer.seek(0)
+                                    st.session_state[f'zip_bytes_{part.id}'] = zip_buffer.getvalue()
+                                    
+                                    # 2. Trazabilidad
+                                    if not doc_exp:
+                                        db.add(DocumentoExpediente(
+                                            participacion_id=part.id,
+                                            categoria_documento="Paquete",
+                                            tipo_documento="Paquete Unificado",
+                                            estatus="Generado"
+                                        ))
+                                    else:
+                                        doc_exp.estatus = "Actualizado"
+                                    db.commit()
+                                    st.rerun()
 
-                                st.download_button(
-                                    label="⬇️ 1. Descargar Paquete (.docx)",
-                                    data=st.session_state[f'doc_bytes_{part.id}'],
-                                    file_name=f"Paquete_{part.persona.razon_social_nombre.replace(' ', '_')}.docx",
-                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                    key=f"dl_{part.id}"
-                                )
-                                
+                                # Mostrar botón de descarga del ZIP
+                                if doc_exp or f'zip_bytes_{part.id}' in st.session_state:
+                                    if f'zip_bytes_{part.id}' in st.session_state:
+                                        st.download_button(
+                                            label="⬇️ 1. Descargar Paquete (.zip)",
+                                            data=st.session_state[f'zip_bytes_{part.id}'],
+                                            file_name=f"Paquete_{part.persona.razon_social_nombre.replace(' ', '_')}.zip",
+                                            mime="application/zip",
+                                            key=f"dl_{part.id}"
+                                        )
+                                    else:
+                                        st.info("Por favor, vuelve a dar clic en 'Generar Paquete' para cargar el archivo en memoria.")
+                                        
                         with col_der:
-                            # Componente para subir el documento ya firmado
+                            # Carga del PDF escaneado
                             archivo_subido = st.file_uploader("⬆️ 3. Subir Paquete Firmado (.pdf)", type=["pdf"], key=f"up_{part.id}")
                             if archivo_subido is not None:
                                 if st.button("Confirmar Entrega de Documento", key=f"btn_up_{part.id}"):
-                                    # Por ahora (MVP local), guardamos en outputs. En M365/Supabase, aquí se enviaría a la nube.
                                     os.makedirs("app/outputs/firmados", exist_ok=True)
                                     ruta_pdf = f"app/outputs/firmados/Firmado_{part.persona.razon_social_nombre.replace(' ', '_')}.pdf"
                                     with open(ruta_pdf, "wb") as f:
                                         f.write(archivo_subido.getbuffer())
                                     
-                                    # Actualizar BD
                                     doc_exp.estatus = "Firmado y Cargado"
                                     doc_exp.ruta_archivo = ruta_pdf
                                     db.commit()
-                                    st.success("¡Documento enviado exitosamente al administrador!")
+                                    st.success("¡Documento enviado!")
                                     st.rerun()
 
-                        # Mostrar Instrucciones de Firma si ya se generó el documento
-                        if doc_exp:
+                        # Mostrar Instrucciones Actualizadas
+                        if doc_exp and plantillas_aplicables:
                             st.markdown("### 📋 Instrucciones de Firma")
-                            st.write("1. Descargue el paquete documental unificado.")
-                            st.write("2. Asegúrese de que el documento esté conformado por los siguientes formatos y firme según corresponde:")
+                            st.write("2. Extraiga el contenido del ZIP. Firme cada documento según la siguiente tabla:")
                             
-                            # Estructura de datos que en el futuro (Sprint 2.6) vendrá de la Base de Datos
-                            # 'paginas_totales' es la longitud del formato individual.
-                            metadatos_formatos = [
-                                {
-                                    "nombre": "1. Declaración de Entidad",
-                                    "paginas_totales": 7, 
-                                    "rubricar_todas": "✅ Sí",
-                                    "firmas": [
-                                        {"pag_formato": 2, "tipo_firma": "Firma Simple"},
-                                        {"pag_formato": 6, "tipo_firma": "Nombre y Firma"}
-                                    ]
-                                },
-                                {
-                                    "nombre": "2. Formato de Aceptación",
-                                    "paginas_totales": 3,
-                                    "rubricar_todas": "✅ Sí",
-                                    "firmas": [
-                                        {"pag_formato": 2, "tipo_firma": "Nombre, Firma y Huella"}
-                                    ]
-                                }
-                            ]
-                            
-                            # Motor de cálculo de paginación doble y totalización
                             filas_tabla = []
-                            offset_paginas = 0
                             total_firmas_paquete = 0
                             
-                            for formato in metadatos_formatos:
-                                num_firmas = len(formato["firmas"])
+                            for formato in plantillas_aplicables:
+                                firmas = formato.firmas_json or []
+                                num_firmas = len(firmas)
                                 total_firmas_paquete += num_firmas
                                 
-                                for i, firma in enumerate(formato["firmas"]):
-                                    # Calcula en qué página del PDF final cae esta firma
-                                    pag_documento = offset_paginas + firma["pag_formato"]
-                                    
-                                    # Para no repetir el nombre del formato y el número de firmas en cada línea, 
-                                    # solo lo mostramos en la primera fila del formato (estilo merge-cell visual)
-                                    mostrar_nombre = formato["nombre"] if i == 0 else ""
-                                    mostrar_num_firmas = num_firmas if i == 0 else ""
-                                    mostrar_rubrica = formato["rubricar_todas"] if i == 0 else ""
-                                    
+                                for i, firma in enumerate(firmas):
                                     filas_tabla.append({
-                                        "Formato": mostrar_nombre,
-                                        "Núm. Firmas": mostrar_num_firmas,
-                                        "Pág (Formato)": firma["pag_formato"],
-                                        "Pág (Documento)": pag_documento,
-                                        "Tipo de Firma": firma["tipo_firma"],
-                                        "Rubricar todas": mostrar_rubrica
+                                        "Documento": formato.nombre if i == 0 else "",
+                                        "Núm. Firmas": num_firmas if i == 0 else "",
+                                        "Página a Firmar": firma.get("pag_formato", ""),
+                                        "Tipo de Firma": firma.get("tipo_firma", ""),
+                                        "Rubricar todas": formato.rubricar_todas if i == 0 else ""
                                     })
                                 
-                                # Actualizar el offset para el siguiente formato sumando las páginas del actual
-                                offset_paginas += formato["paginas_totales"]
-                                
-                            # Agregar fila de Totalizadores
+                                if num_firmas == 0:
+                                    filas_tabla.append({
+                                        "Documento": formato.nombre,
+                                        "Núm. Firmas": 0,
+                                        "Página a Firmar": "-",
+                                        "Tipo de Firma": "-",
+                                        "Rubricar todas": formato.rubricar_todas
+                                    })
+                                    
                             filas_tabla.append({
-                                "Formato": "TOTAL PAQUETE",
+                                "Documento": "TOTAL",
                                 "Núm. Firmas": f"**{total_firmas_paquete}**",
-                                "Pág (Formato)": "",
-                                "Pág (Documento)": "",
+                                "Página a Firmar": "",
                                 "Tipo de Firma": "",
                                 "Rubricar todas": ""
                             })
                             
-                            # Renderizado
-                            df_inst = pd.DataFrame(filas_tabla)
-                            # Convertimos a string para evitar que pandas ponga decimales en los números vacíos
-                            st.markdown(df_inst.style.hide(axis="index").to_html(), unsafe_allow_html=True)
-                        
+                            st.markdown(pd.DataFrame(filas_tabla).style.hide(axis="index").to_html(), unsafe_allow_html=True)
         else:
             st.warning("Aún no tienes entidades asignadas. Contacta al Administrador.")
+        
         db.close()
 
 def main():
