@@ -6,3 +6,7 @@ app/outputs/*.docx
 *.db
 *.sqlite3
 .DS_Store
+
+.secret
+.secret.*
+!.secret.example
