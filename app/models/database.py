@@ -136,28 +136,26 @@ class PlantillaFormato(Base):
 # ==========================================
 # CONFIGURACIÓN DE BASE DE DATOS
 # ==========================================
+# ==========================================
+# CONFIGURACIÓN DE BASE DE DATOS SEGURA
+# ==========================================
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if DATABASE_URL:
-    # Inyección dinámica del password desde el archivo .secret
     if "[PWD]" in DATABASE_URL:
-        # dotenv_values lee el archivo sin cargarlo al entorno global del SO
-        secrets = dotenv_values(".secret")
-        db_pwd = secrets.get("SUPABASE_PROD")
+        # Busca primero en Variables de Entorno (Render/Streamlit), luego en el archivo local .secret
+        db_pwd = os.getenv("SUPABASE_PROD") or dotenv_values(".secret").get("SUPABASE_PROD")
         
         if db_pwd:
             DATABASE_URL = DATABASE_URL.replace("[PWD]", db_pwd)
         else:
-            raise ValueError("ERROR CRÍTICO: Se encontró PWD en DATABASE_URL pero no existe la contraseña en los secrets del entorno")
+            raise ValueError("ERROR: No se encontraron variables de entorno")
 
-    # Adaptación para el formato de conexión de SQLAlchemy
     if DATABASE_URL.startswith("postgres://"):
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-    print("CONNECTING TO SUPPABASE")    
-    engine = create_engine(DATABASE_URL, echo=True)
+        
+    engine = create_engine(DATABASE_URL, echo=False)
 else:
-    # Fallback local
-    print("CONNECTION ERROR. Fallback to local DB")
     engine = create_engine("sqlite:///app_database.sqlite3", echo=False)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
