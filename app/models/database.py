@@ -140,14 +140,14 @@ from supabase import create_client, Client
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+SUPABASE_KEY = os.getenv("SUPABASE_SECRET_KEY")
 
 # Respaldo para entorno local (leyendo .secret)
 if not DATABASE_URL or not SUPABASE_URL or not SUPABASE_KEY:
     secrets = dotenv_values(".secret")
     DATABASE_URL = DATABASE_URL or secrets.get("DATABASE_URL")
     SUPABASE_URL = SUPABASE_URL or secrets.get("SUPABASE_URL")
-    SUPABASE_KEY = SUPABASE_KEY or secrets.get("SUPABASE_SERVICE_KEY")
+    SUPABASE_KEY = SUPABASE_KEY or secrets.get("SUPABASE_SECRET_KEY")
 
 # 1. Configuración de Storage (Supabase Client)
 supabase_client: Client = None
