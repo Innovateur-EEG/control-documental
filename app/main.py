@@ -15,7 +15,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.models.database import(
     SessionLocal, Usuario, Proyecto, Persona,
     Catalogo, Participacion, JerarquiaParticipacion, DocumentoExpediente,
-    PlantillaFormato
+    PlantillaFormato, supabase_client
 )
 
 from app.utils.auth import verificar_password, generar_hash
@@ -225,13 +225,19 @@ def dashboard_principal():
                     
                     if st.form_submit_button("Subir y Crear Plantilla"):
                         if nombre_tpl and roles_sel and archivo_tpl:
-                            # 1. Guardar el archivo físicamente en el servidor
-                            os.makedirs("app/templates", exist_ok=True)
-                            ruta_guardado = f"app/templates/{archivo_tpl.name}"
-                            with open(ruta_guardado, "wb") as f:
-                                f.write(archivo_tpl.getbuffer())
+                            # 1. Guardar el archivo físicamente EN SUPABASE STORAGE
+                            ruta_guardado = f"templates/{archivo_tpl.name}"
+                            try:
+                                supabase_client.storage.from_("expedientes").upload(
+                                    file=archivo_tpl.getvalue(),
+                                    path=ruta_guardado,
+                                    file_options={"content-type": archivo_tpl.type, "x-upsert": "true"}
+                                )
+                            except Exception as e:
+                                st.error(f"Error subiendo archivo a la nube: {e}")
+                                st.stop()
                                 
-                            # 2. Registrar en la base de datos
+                            # 2. Registrar en la base de datos            
                             nueva_tpl = PlantillaFormato(
                                 nombre=nombre_tpl,
                                 roles_aplica=roles_sel,
@@ -539,24 +545,26 @@ def dashboard_principal():
                                 if st.button(f"Generar Paquete (.zip)", key=f"btn_gen_{part.id}"):
                                     context = {"nombre": part.persona.razon_social_nombre, "rfc": part.persona.rfc or "", **datos_actuales}
                                     
-                                    # 1. Crear el ZIP en memoria
+                                    # 1. Crear el ZIP en memoria consultando Supabase
                                     zip_buffer = io.BytesIO()
                                     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
                                         for tpl in plantillas_aplicables:
-                                            if tpl.ruta_plantilla_word and os.path.exists(tpl.ruta_plantilla_word):
+                                            if tpl.ruta_plantilla_word:
                                                 extension = os.path.splitext(tpl.ruta_plantilla_word)[1].lower()
-                                                
-                                                if extension == ".docx":
-                                                    # Compilar Word con Jinja2
-                                                    doc = DocxTemplate(tpl.ruta_plantilla_word)
-                                                    doc.render(context)
-                                                    doc_io = io.BytesIO()
-                                                    doc.save(doc_io)
-                                                    zip_file.writestr(f"{tpl.nombre}.docx", doc_io.getvalue())
-                                                else:
-                                                    # Si es Excel u otro, simplemente añadirlo al ZIP
-                                                    with open(tpl.ruta_plantilla_word, "rb") as f:
-                                                        zip_file.writestr(f"{tpl.nombre}{extension}", f.read())
+                                                try:
+                                                    # Descargar de la nube directo a la memoria RAM (0 uso de disco)
+                                                    archivo_bytes = supabase_client.storage.from_("expedientes").download(tpl.ruta_plantilla_word)
+                                                    
+                                                    if extension == ".docx":
+                                                        doc = DocxTemplate(io.BytesIO(archivo_bytes))
+                                                        doc.render(context)
+                                                        doc_io = io.BytesIO()
+                                                        doc.save(doc_io)
+                                                        zip_file.writestr(f"{tpl.nombre}.docx", doc_io.getvalue())
+                                                    else:
+                                                        zip_file.writestr(f"{tpl.nombre}{extension}", archivo_bytes)
+                                                except Exception as e:
+                                                    st.error(f"No se pudo anexar '{tpl.nombre}': Archivo no encontrado en la nube.")
                                     
                                     zip_buffer.seek(0)
                                     st.session_state[f'zip_bytes_{part.id}'] = zip_buffer.getvalue()
@@ -592,16 +600,24 @@ def dashboard_principal():
                             archivo_subido = st.file_uploader("⬆️ 3. Subir Paquete Firmado (.pdf)", type=["pdf"], key=f"up_{part.id}")
                             if archivo_subido is not None:
                                 if st.button("Confirmar Entrega de Documento", key=f"btn_up_{part.id}"):
-                                    os.makedirs("app/outputs/firmados", exist_ok=True)
-                                    ruta_pdf = f"app/outputs/firmados/Firmado_{part.persona.razon_social_nombre.replace(' ', '_')}.pdf"
-                                    with open(ruta_pdf, "wb") as f:
-                                        f.write(archivo_subido.getbuffer())
+                                    nombre_limpio = part.persona.razon_social_nombre.replace(' ', '_')
+                                    ruta_pdf = f"firmados/{part.id}_Firmado_{nombre_limpio}.pdf"
                                     
-                                    doc_exp.estatus = "Firmado y Cargado"
-                                    doc_exp.ruta_archivo = ruta_pdf
-                                    db.commit()
-                                    st.success("¡Documento enviado!")
-                                    st.rerun()
+                                    try:
+                                        # Subir a la bóveda privada de Supabase
+                                        supabase_client.storage.from_("expedientes").upload(
+                                            file=archivo_subido.getvalue(),
+                                            path=ruta_pdf,
+                                            file_options={"content-type": "application/pdf", "x-upsert": "true"}
+                                        )
+                                        
+                                        doc_exp.estatus = "Firmado y Cargado"
+                                        doc_exp.ruta_archivo = ruta_pdf
+                                        db.commit()
+                                        st.success("¡Documento enviado y resguardado en la nube de forma segura!")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Error subiendo a la nube: {e}")
 
                         # Mostrar Instrucciones Actualizadas
                         if doc_exp and plantillas_aplicables:

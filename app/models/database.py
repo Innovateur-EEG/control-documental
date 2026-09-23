@@ -134,22 +134,36 @@ class PlantillaFormato(Base):
     ruta_plantilla_word = Column(String, nullable=True) # Para futura integración con Supabase Storage
 
 # ==========================================
-# CONFIGURACIÓN DE BASE DE DATOS
+# CONFIGURACIÓN DE BASE DE DATOS SEGURA Y STORAGE
 # ==========================================
-# ==========================================
-# CONFIGURACIÓN DE BASE DE DATOS SEGURA
-# ==========================================
-DATABASE_URL = os.getenv("DATABASE_URL")
+from supabase import create_client, Client
 
+DATABASE_URL = os.getenv("DATABASE_URL")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+
+# Respaldo para entorno local (leyendo .secret)
+if not DATABASE_URL or not SUPABASE_URL or not SUPABASE_KEY:
+    secrets = dotenv_values(".secret")
+    DATABASE_URL = DATABASE_URL or secrets.get("DATABASE_URL")
+    SUPABASE_URL = SUPABASE_URL or secrets.get("SUPABASE_URL")
+    SUPABASE_KEY = SUPABASE_KEY or secrets.get("SUPABASE_SERVICE_KEY")
+
+# 1. Configuración de Storage (Supabase Client)
+supabase_client: Client = None
+if SUPABASE_URL and SUPABASE_KEY:
+    supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+else:
+    print("ADVERTENCIA: Faltan credenciales de Supabase. El almacenamiento de archivos fallará.")
+
+# 2. Configuración de PostgreSQL (SQLAlchemy)
 if DATABASE_URL:
     if "[PWD]" in DATABASE_URL:
-        # Busca primero en Variables de Entorno (Render/Streamlit), luego en el archivo local .secret
-        db_pwd = os.getenv("SUPABASE_PROD") or dotenv_values(".secret").get("SUPABASE_PROD")
-        
+        db_pwd = os.getenv("SUPABASE_PROD") or secrets.get("SUPABASE_PROD")
         if db_pwd:
             DATABASE_URL = DATABASE_URL.replace("[PWD]", db_pwd)
         else:
-            raise ValueError("ERROR: No se encontraron variables de entorno")
+            raise ValueError("ERROR CRÍTICO: No se encontró la contraseña")
 
     if DATABASE_URL.startswith("postgres://"):
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
