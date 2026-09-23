@@ -1,6 +1,9 @@
 [tools]
 python = "3.12"
 
+[env]
+_.python.venv = { path = ".venv", create = true }
+
 [tasks]
 setup = "pip install -r requirements.txt"
 db-init = "python scripts/init_db.py"

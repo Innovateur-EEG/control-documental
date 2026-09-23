@@ -278,7 +278,8 @@ def dashboard_principal():
                             use_container_width=True
                         )
                         
-                        col_a, col_b, col_c = st.columns([2, 1, 1])
+                        # Controles de edición rápida
+                        col_a, col_b, col_c, col_d = st.columns([2, 1, 1, 1])
                         with col_a:
                             nuevos_roles = st.multiselect("Modificar Roles", options=roles_disponibles, default=tpl.roles_aplica, key=f"roles_{tpl.id}")
                         with col_b:
@@ -286,12 +287,20 @@ def dashboard_principal():
                         with col_c:
                             st.write("") 
                             st.write("")
-                            if st.button("💾 Guardar Cambios", key=f"btn_save_{tpl.id}"):
+                            if st.button("💾 Guardar", key=f"btn_save_{tpl.id}"):
                                 tpl.roles_aplica = nuevos_roles
                                 tpl.paginas_totales = nueva_pag
                                 tpl.firmas_json = df_editado.to_dict(orient="records")
                                 db.commit()
                                 st.success("Configuración actualizada.")
+                                st.rerun()
+                        with col_d:
+                            st.write("") 
+                            st.write("")
+                            if st.button("🗑️ Eliminar", key=f"btn_del_{tpl.id}"):
+                                db.delete(tpl)
+                                db.commit()
+                                st.success("Plantilla eliminada.")
                                 st.rerun()
             db.close()
             
