@@ -1,5 +1,6 @@
 import os
 import io
+import platform
 import tempfile
 import subprocess
 import openpyxl
@@ -35,7 +36,6 @@ def procesar_word(file_bytes: bytes, context: dict) -> bytes:
 def convertir_a_pdf(file_bytes: bytes, extension: str) -> bytes:
     """
     Usa LibreOffice en modo invisible para convertir Word o Excel a PDF.
-    extension debe incluir el punto, ej. '.docx' o '.xlsx'
     """
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, f"input{extension}")
@@ -43,18 +43,29 @@ def convertir_a_pdf(file_bytes: bytes, extension: str) -> bytes:
         with open(input_path, "wb") as f:
             f.write(file_bytes)
             
-        # Comando para Linux (Streamlit Cloud) o MacOS/Windows (Local si está en PATH)
-        cmd = ["libreoffice", "--headless", "--convert-to", "pdf", input_path, "--outdir", tmpdir]
+        # Determinar el comando según el sistema operativo
+        if platform.system() == "Windows":
+            # Rutas típicas de LibreOffice en Windows
+            ruta_lo = r"C:\Program Files\LibreOffice\program\soffice.exe"
+            if not os.path.exists(ruta_lo):
+                ruta_lo = r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"
+            cmd = [ruta_lo, "--headless", "--convert-to", "pdf", input_path, "--outdir", tmpdir]
+        else:
+            # Comando nativo para Linux (Streamlit Cloud / Render)
+            cmd = ["libreoffice", "--headless", "--convert-to", "pdf", input_path, "--outdir", tmpdir]
         
         try:
             subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        except FileNotFoundError:
-            # Fallback por si en desarrollo local el comando se llama distinto
-            try:
-                cmd[0] = "soffice"
-                subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            except FileNotFoundError:
-                raise RuntimeError("LibreOffice no está instalado o no está en el PATH del sistema.")
+        except Exception as e:
+            # Fallback a 'soffice' genérico en Linux/Mac
+            if platform.system() != "Windows":
+                try:
+                    cmd[0] = "soffice"
+                    subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                except Exception as inner_e:
+                    raise RuntimeError(f"Error de conversión: LibreOffice no encontrado. Detalle: {inner_e}")
+            else:
+                raise RuntimeError(f"LibreOffice no se encontró en 'Program Files'. Instálalo o revisa la ruta. Detalle: {e}")
                 
         pdf_path = os.path.join(tmpdir, "input.pdf")
         with open(pdf_path, "rb") as f:
