@@ -120,19 +120,39 @@ class DocumentoExpediente(Base):
     participacion = relationship("Participacion", back_populates="documentos")
 
 # ==========================================
-# PILAR 4: GESTOR DINÁMICO DE PLANTILLAS
+# PILAR 4: GESTOR DINÁMICO DE PLANTILLAS Y CAMPOS
 # ==========================================
 class PlantillaFormato(Base):
     """Almacena la metadata y reglas de firma de cada documento que conforma el paquete"""
     __tablename__ = 'plantillas_formato'
     id = Column(Integer, primary_key=True)
     nombre = Column(String, nullable=False)
-    roles_aplica = Column(JSON, default=[]) # Lista de roles que deben firmar este formato (Ej. ["Fideicomitente", "Apoderado"])
+    roles_aplica = Column(JSON, default=[]) 
     paginas_totales = Column(Integer, nullable=False, default=1)
     rubricar_todas = Column(String, default="✅ Sí")
-    firmas_json = Column(JSON, default=[]) # Contiene [{"pag_formato": 2, "tipo_firma": "Firma Simple"}]
-    ruta_plantilla_word = Column(String, nullable=True) # Para futura integración con Supabase Storage
+    firmas_json = Column(JSON, default=[]) 
+    ruta_plantilla_word = Column(String, nullable=True)
 
+class ConfiguracionCampos(Base):
+    """Define qué variables se piden en los formularios y sus reglas de negocio"""
+    __tablename__ = 'configuracion_campos'
+    id = Column(Integer, primary_key=True)
+    nombre_mostrar = Column(String, nullable=False)  # Ej. "Comprobante de Domicilio (Fecha)"
+    llave_jinja = Column(String, nullable=False)     # Ej. "fecha_comp_dom" -> El {{ tag }} en Word
+    tipo_input = Column(String, nullable=False)      # "Texto", "Fecha", "Número", "Opciones"
+    opciones_json = Column(JSON, default=[])         # Lista de dropdown si es tipo "Opciones"
+    tipo_persona = Column(String, nullable=False)    # "Fisica", "Moral", "Ambas"
+    roles_aplica = Column(JSON, default=[])          # Lista de roles. Si está vacío, aplica a todos.
+    regla_validacion = Column(String, nullable=True) # "ninguna", "max_90_dias", "vigente_futuro"
+
+class ConfiguracionEvidencia(Base):
+    """Define qué archivos adjuntos se requieren según el perfil"""
+    __tablename__ = 'configuracion_evidencias'
+    id = Column(Integer, primary_key=True)
+    nombre_evidencia = Column(String, nullable=False) # Ej. "Identificación Oficial (INE)"
+    tipo_persona = Column(String, nullable=False)     # "Fisica", "Moral", "Ambas"
+    roles_aplica = Column(JSON, default=[])           # Lista de roles. Si vacío, aplica a todos.
+ 
 # ==========================================
 # CONFIGURACIÓN DE BASE DE DATOS SEGURA Y STORAGE
 # ==========================================
