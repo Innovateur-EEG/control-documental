@@ -9,9 +9,9 @@ import streamlit as st
 import pandas as pd
 from docxtpl import DocxTemplate
 
-from app.utils.documentos import procesar_excel, procesar_word, convertir_a_pdf, fusionar_pdfs
-
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.utils.documentos import procesar_excel, procesar_word, convertir_a_pdf, fusionar_pdfs
 
 from app.models.database import(
     SessionLocal, Usuario, Proyecto, Persona,
