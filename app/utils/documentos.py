@@ -46,10 +46,13 @@ def convertir_a_pdf(file_bytes: bytes, extension: str) -> bytes:
         cmd = None
         # Búsqueda de rutas para Windows Local
         if platform.system() == "Windows":
-            rutas = [
-                r"C:\Program Files\LibreOffice\program\soffice.exe",
-                r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"
-            ]
+            rutas = []
+            # Buscar en los discos más comunes
+            for disco in ["C", "D", "E"]:
+                rutas.extend([
+                    rf"{disco}:\Program Files\LibreOffice\program\soffice.exe",
+                    rf"{disco}:\Program Files (x86)\LibreOffice\program\soffice.exe"
+                ])
             for ruta in rutas:
                 if os.path.exists(ruta):
                     cmd = [ruta, "--headless", "--convert-to", "pdf", input_path, "--outdir", tmpdir]
