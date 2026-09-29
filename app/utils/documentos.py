@@ -43,31 +43,43 @@ def convertir_a_pdf(file_bytes: bytes, extension: str) -> bytes:
         with open(input_path, "wb") as f:
             f.write(file_bytes)
             
-        # Determinar el comando según el sistema operativo
+        cmd = None
+        # Búsqueda de rutas para Windows Local
         if platform.system() == "Windows":
-            # Rutas típicas de LibreOffice en Windows
-            ruta_lo = r"C:\Program Files\LibreOffice\program\soffice.exe"
-            if not os.path.exists(ruta_lo):
-                ruta_lo = r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"
-            cmd = [ruta_lo, "--headless", "--convert-to", "pdf", input_path, "--outdir", tmpdir]
+            rutas = [
+                r"C:\Program Files\LibreOffice\program\soffice.exe",
+                r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"
+            ]
+            for ruta in rutas:
+                if os.path.exists(ruta):
+                    cmd = [ruta, "--headless", "--convert-to", "pdf", input_path, "--outdir", tmpdir]
+                    break
+            # Fallback si está instalado pero en otra ruta (requiere estar en el PATH)
+            if not cmd:
+                cmd = ["soffice", "--headless", "--convert-to", "pdf", input_path, "--outdir", tmpdir]
         else:
-            # Comando nativo para Linux (Streamlit Cloud / Render)
+            # Comando nativo para Linux (Streamlit Cloud)
             cmd = ["libreoffice", "--headless", "--convert-to", "pdf", input_path, "--outdir", tmpdir]
         
         try:
             subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        except Exception as e:
-            # Fallback a 'soffice' genérico en Linux/Mac
+        except FileNotFoundError:
+            # Fallback en Linux por si el comando se llama distinto
             if platform.system() != "Windows":
                 try:
                     cmd[0] = "soffice"
                     subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 except Exception as inner_e:
-                    raise RuntimeError(f"Error de conversión: LibreOffice no encontrado. Detalle: {inner_e}")
+                    raise RuntimeError(f"Error Linux: 'libreoffice' no está instalado. Streamlit no leyó packages.txt. Detalle: {inner_e}")
             else:
-                raise RuntimeError(f"LibreOffice no se encontró en 'Program Files'. Instálalo o revisa la ruta. Detalle: {e}")
-                
+                raise RuntimeError("Error Windows: LibreOffice no está en C:\\Program Files\\ ni en el PATH. Instálalo para probar en local.")
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"El motor de LibreOffice falló al convertir. Error: {e.stderr.decode()}")
+            
         pdf_path = os.path.join(tmpdir, "input.pdf")
+        if not os.path.exists(pdf_path):
+            raise RuntimeError("LibreOffice se ejecutó pero el archivo PDF no se generó correctamente.")
+            
         with open(pdf_path, "rb") as f:
             return f.read()
 
