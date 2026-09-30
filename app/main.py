@@ -426,12 +426,12 @@ def dashboard_principal():
                             st.rerun()
             db.close()
         
-        # --- GESTOR DE CAMPOS Y VALIDACIONES (WBS 3.2.2) ---
+        # --- GESTOR DE CAMPOS Y VALIDACIONES ---
         with tabs[3]:
             st.subheader("Configuración de Campos y Validaciones")
             st.write("Defina qué información se solicitará a los usuarios en el portal, la etiqueta Jinja que la vinculará a Word/Excel, y si requiere pasar por una regla matemática.")
             
-            db = get_db_session()
+            db session()
             roles_disponibles = [c.valor for c in db.query(Catalogo).filter_by(categoria="Rol_Participacion").all()]
             
             with st.expander("➕ Crear Nuevo Campo Obligatorio"):
@@ -489,7 +489,6 @@ def dashboard_principal():
         # --- GESTIÓN DE PROYECTOS ---
         with tabs[4]:
             st.subheader("Gestión de Proyectos")
-            # ... (tu código actual de Proyectos)
             with st.expander("➕ Crear Nuevo Proyecto"):
                 with st.form("form_nuevo_proyecto"):
                     nombre_proyecto = st.text_input("Nombre del Proyecto")
@@ -500,16 +499,36 @@ def dashboard_principal():
                         db.close()
                         st.success(f"Proyecto '{nombre_proyecto}' creado.")
                         st.rerun()
+
             db = get_db_session()
             proyectos = db.query(Proyecto).all()
             if proyectos:
-                st.dataframe(pd.DataFrame([{"ID": p.id, "Nombre": p.nombre, "Estatus": p.estatus_general} for p in proyectos]), hide_index=True, use_container_width=True)
+                st.write("**Proyectos Registrados (Haga doble clic en una celda para editar):**")
+                df_proyectos = pd.DataFrame([{"ID": p.id, "Nombre": p.nombre, "Estatus": p.estatus_general} for p in proyectos])
+                
+                # Editor visual como Excel
+                df_proyectos_editado = st.data_editor(
+                    df_proyectos,
+                    hide_index=True,
+                    use_container_width=True,
+                    disabled=["ID"], # Protegemos el ID para no romper la base de datos
+                    key="editor_proyectos"
+                )
+                
+                if st.button("💾 Guardar Cambios en Proyectos"):
+                    for index, row in df_proyectos_editado.iterrows():
+                        proy = db.query(Proyecto).filter(Proyecto.id == row["ID"]).first()
+                        if proy and (proy.nombre != row["Nombre"] or proy.estatus_general != row["Estatus"]):
+                            proy.nombre = row["Nombre"]
+                            proy.estatus_general = row["Estatus"]
+                    db.commit()
+                    st.success("✅ Proyectos actualizados exitosamente.")
+                    st.rerun()
             db.close()
 
         # --- CATÁLOGO MAESTRO ---
         with tabs[5]:
             st.subheader("Catálogo Maestro de Personas")
-            # ... (tu código actual de Personas)
             with st.expander("➕ Registrar Nueva Persona"):
                 with st.form("form_nueva_persona"):
                     col1, col2 = st.columns(2)
@@ -523,10 +542,40 @@ def dashboard_principal():
                         db.close()
                         st.success("Persona registrada.")
                         st.rerun()
+
             db = get_db_session()
             personas = db.query(Persona).all()
             if personas:
-                st.dataframe(pd.DataFrame([{"ID": p.id, "Tipo": p.tipo, "Razón Social / Nombre": p.razon_social_nombre} for p in personas]), hide_index=True, use_container_width=True)
+                st.write("**Catálogo de Entidades (Haga doble clic en una celda para editar):**")
+                df_personas = pd.DataFrame([{
+                    "ID": p.id, 
+                    "Tipo": p.tipo, 
+                    "RFC": p.rfc if p.rfc else "", 
+                    "Razón Social / Nombre": p.razon_social_nombre
+                } for p in personas])
+                
+                # Editor visual para personas
+                df_personas_editado = st.data_editor(
+                    df_personas,
+                    hide_index=True,
+                    use_container_width=True,
+                    disabled=["ID"],
+                    column_config={
+                        "Tipo": st.column_config.SelectboxColumn("Tipo", options=["Moral", "Fisica"])
+                    },
+                    key="editor_personas"
+                )
+                
+                if st.button("💾 Guardar Cambios en Personas"):
+                    for index, row in df_personas_editado.iterrows():
+                        pers = db.query(Persona).filter(Persona.id == row["ID"]).first()
+                        if pers:
+                            pers.tipo = row["Tipo"]
+                            pers.rfc = row["RFC"]
+                            pers.razon_social_nombre = row["Razón Social / Nombre"]
+                    db.commit()
+                    st.success("✅ Catálogo actualizado exitosamente.")
+                    st.rerun()
             db.close()
 
         # --- VARIABLES DE SISTEMA ---
