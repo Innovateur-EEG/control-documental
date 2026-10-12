@@ -1,16 +1,19 @@
 import os
 import datetime
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, DateTime, Table, JSON
+from sqlalchemy.sql import func
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from dotenv import load_dotenv, dotenv_values
+from supabase import create_client, Client
+import streamlit as st
+from contextlib import contextmanager
 
-# Cargar variables de entorno (lee el .env local)
 load_dotenv()
 
 Base = declarative_base()
 
 # ==========================================
-# TABLAS DE RELACIÓN (MUCHOS A MUCHOS)
+# TABLAS DE RELACIÓN Y ASOCIACIÓN
 # ==========================================
 usuario_proyecto_admin = Table(
     'usuario_proyecto_admin', Base.metadata,
@@ -18,11 +21,17 @@ usuario_proyecto_admin = Table(
     Column('proyecto_id', Integer, ForeignKey('proyectos.id'), primary_key=True)
 )
 
-usuario_persona_gestor = Table(
-    'usuario_persona_gestor', Base.metadata,
-    Column('usuario_id', Integer, ForeignKey('usuarios.id'), primary_key=True),
-    Column('persona_id', Integer, ForeignKey('personas.id'), primary_key=True)
-)
+# FIX CRÍTICO: Objeto de Asociación en lugar de Tabla Simple para manejar permisos atómicos
+class UsuarioPersonaGestor(Base):
+    __tablename__ = 'usuario_persona_gestor'
+    usuario_id = Column(Integer, ForeignKey('usuarios.id'), primary_key=True)
+    persona_id = Column(Integer, ForeignKey('personas.id'), primary_key=True)
+    # Fail-closed security: Por defecto es Solo Lectura
+    nivel_permiso = Column(String, nullable=False, default="Solo Lectura") 
+    
+    usuario = relationship("Usuario", back_populates="personas_asignadas")
+    persona = relationship("Persona", back_populates="usuarios_asignados")
+
 
 # ==========================================
 # PILAR 1: IDENTIDAD Y ACCESO
@@ -31,32 +40,31 @@ class Usuario(Base):
     __tablename__ = 'usuarios'
     id = Column(Integer, primary_key=True)
     email = Column(String, unique=True, nullable=False)
-    password_hash = Column(String, nullable=True) # Permitimos null temporalmente para el OTP
+    password_hash = Column(String, nullable=True) 
     telefono = Column(String, nullable=True)
-    tipo_usuario = Column(String, nullable=False) # 'SuperAdmin', 'Admin', 'Usuario'
-    debe_cambiar_password = Column(Integer, default=1) # 1 = True, 0 = False (SQLite fallback compatible)
+    tipo_usuario = Column(String, nullable=False) 
+    debe_cambiar_password = Column(Integer, default=1) 
     
-    # Relaciones de permisos
     proyectos_admin = relationship("Proyecto", secondary=usuario_proyecto_admin, back_populates="admins")
-    personas_gestor = relationship("Persona", secondary=usuario_persona_gestor, back_populates="gestores")
+    personas_asignadas = relationship("UsuarioPersonaGestor", back_populates="usuario", cascade="all, delete-orphan")
 
 
 # ==========================================
 # PILAR 2: ENTIDADES UNIVERSALES
 # ==========================================
 class Catalogo(Base):
-    """Almacena valores dinámicos para los selectores (dropdowns)"""
     __tablename__ = 'catalogos'
     id = Column(Integer, primary_key=True)
-    categoria = Column(String, nullable=False) # Ej. 'Rol_Participacion', 'Tipo_Relacion'
-    valor = Column(String, nullable=False)     # Ej. 'Fideicomisario', 'Representa a'
-    
+    categoria = Column(String, nullable=False) 
+    valor = Column(String, nullable=False)     
+
 class Proyecto(Base):
     __tablename__ = 'proyectos'
     id = Column(Integer, primary_key=True)
     nombre = Column(String, nullable=False)
     estatus_general = Column(String, default="Activo")
-    fecha_creacion = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc))
+    # FIX: func.now() en lugar de datetime.now()
+    fecha_creacion = Column(DateTime, server_default=func.now())
 
     admins = relationship("Usuario", secondary=usuario_proyecto_admin, back_populates="proyectos_admin")
     participaciones = relationship("Participacion", back_populates="proyecto")
@@ -64,12 +72,13 @@ class Proyecto(Base):
 class Persona(Base):
     __tablename__ = 'personas'
     id = Column(Integer, primary_key=True)
-    tipo = Column(String, nullable=False) # 'Fisica' o 'Moral'
+    tipo = Column(String, nullable=False) 
     rfc = Column(String, nullable=True)
     razon_social_nombre = Column(String, nullable=False)
-    datos_json = Column(JSON, default={}) # Domicilios, fechas, etc.
+    # FIX: default=dict en lugar de default={}
+    datos_json = Column(JSON, default=dict) 
 
-    gestores = relationship("Usuario", secondary=usuario_persona_gestor, back_populates="personas_gestor")
+    usuarios_asignados = relationship("UsuarioPersonaGestor", back_populates="persona", cascade="all, delete-orphan")
     participaciones = relationship("Participacion", back_populates="persona")
 
 
@@ -77,45 +86,40 @@ class Persona(Base):
 # PILAR 3: CONTEXTO, JERARQUÍA Y DOCUMENTOS
 # ==========================================
 class Participacion(Base):
-    """Vincula una Persona a un Proyecto con un Rol específico"""
     __tablename__ = 'participaciones'
     id = Column(Integer, primary_key=True)
     proyecto_id = Column(Integer, ForeignKey('proyectos.id'), nullable=False)
     persona_id = Column(Integer, ForeignKey('personas.id'), nullable=False)
-    rol = Column(String, nullable=False) # Ej. 'Fideicomisario', 'Representante Legal'
+    rol = Column(String, nullable=False) 
 
     proyecto = relationship("Proyecto", back_populates="participaciones")
     persona = relationship("Persona", back_populates="participaciones")
     documentos = relationship("DocumentoExpediente", back_populates="participacion")
     
-    # Relaciones para la jerarquía dinámica
     hijos = relationship("JerarquiaParticipacion", foreign_keys='JerarquiaParticipacion.padre_id', back_populates="padre")
     padres = relationship("JerarquiaParticipacion", foreign_keys='JerarquiaParticipacion.hijo_id', back_populates="hijo")
 
-
 class JerarquiaParticipacion(Base):
-    """Define quién representa o es socio de quién dentro de un Proyecto"""
     __tablename__ = 'jerarquia_participaciones'
     id = Column(Integer, primary_key=True)
     padre_id = Column(Integer, ForeignKey('participaciones.id'), nullable=False)
     hijo_id = Column(Integer, ForeignKey('participaciones.id'), nullable=False)
-    tipo_relacion = Column(String, nullable=False) # 'Representa a', 'Es socio de'
+    tipo_relacion = Column(String, nullable=False) 
 
     padre = relationship("Participacion", foreign_keys=[padre_id], back_populates="hijos")
     hijo = relationship("Participacion", foreign_keys=[hijo_id], back_populates="padres")
-
 
 class DocumentoExpediente(Base):
     __tablename__ = 'documentos_expediente'
     id = Column(Integer, primary_key=True)
     participacion_id = Column(Integer, ForeignKey('participaciones.id'), nullable=False)
-    categoria_documento = Column(String, nullable=False) # 'Formato_Sistema' o 'Evidencia_Adjunta'
-    tipo_documento = Column(String, nullable=False) # Ej. 'Formato 1', 'INE', 'Comprobante Domicilio'
+    categoria_documento = Column(String, nullable=False) 
+    tipo_documento = Column(String, nullable=False) 
     estatus = Column(String, default="No empezado") 
     tracking_guia = Column(String, nullable=True)
-    metadata_json = Column(JSON, default={}) # Vigencias, tipos de identificacion
-    ruta_archivo = Column(String, nullable=True) # URL de Supabase Storage en el futuro
-    fecha_actualizacion = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc), onupdate=datetime.datetime.now(datetime.timezone.utc))
+    metadata_json = Column(JSON, default=dict) 
+    ruta_archivo = Column(String, nullable=True) 
+    fecha_actualizacion = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     participacion = relationship("Participacion", back_populates="documentos")
 
@@ -123,76 +127,86 @@ class DocumentoExpediente(Base):
 # PILAR 4: GESTOR DINÁMICO DE PLANTILLAS Y CAMPOS
 # ==========================================
 class PlantillaFormato(Base):
-    """Almacena la metadata y reglas de firma de cada documento que conforma el paquete"""
     __tablename__ = 'plantillas_formato'
     id = Column(Integer, primary_key=True)
     nombre = Column(String, nullable=False)
-    roles_aplica = Column(JSON, default=[]) 
+    roles_aplica = Column(JSON, default=list) 
     paginas_totales = Column(Integer, nullable=False, default=1)
     rubricar_todas = Column(String, default="✅ Sí")
-    firmas_json = Column(JSON, default=[]) 
+    firmas_json = Column(JSON, default=list) 
     ruta_plantilla_word = Column(String, nullable=True)
 
 class ConfiguracionCampos(Base):
-    """Define qué variables se piden en los formularios y sus reglas de negocio"""
     __tablename__ = 'configuracion_campos'
     id = Column(Integer, primary_key=True)
-    nombre_mostrar = Column(String, nullable=False)  # Ej. "Comprobante de Domicilio (Fecha)"
-    llave_jinja = Column(String, nullable=False)     # Ej. "fecha_comp_dom" -> El {{ tag }} en Word
-    tipo_input = Column(String, nullable=False)      # "Texto", "Fecha", "Número", "Opciones"
-    opciones_json = Column(JSON, default=[])         # Lista de dropdown si es tipo "Opciones"
-    tipo_persona = Column(String, nullable=False)    # "Fisica", "Moral", "Ambas"
-    roles_aplica = Column(JSON, default=[])          # Lista de roles. Si está vacío, aplica a todos.
-    regla_validacion = Column(String, nullable=True) # "ninguna", "max_90_dias", "vigente_futuro"
+    nombre_mostrar = Column(String, nullable=False)  
+    llave_jinja = Column(String, nullable=False)     
+    tipo_input = Column(String, nullable=False)      
+    opciones_json = Column(JSON, default=list)         
+    tipo_persona = Column(String, nullable=False)    
+    roles_aplica = Column(JSON, default=list)          
+    regla_validacion = Column(String, nullable=True) 
 
 class ConfiguracionEvidencia(Base):
-    """Define qué archivos adjuntos se requieren según el perfil"""
     __tablename__ = 'configuracion_evidencias'
     id = Column(Integer, primary_key=True)
-    nombre_evidencia = Column(String, nullable=False) # Ej. "Identificación Oficial (INE)"
-    tipo_persona = Column(String, nullable=False)     # "Fisica", "Moral", "Ambas"
-    roles_aplica = Column(JSON, default=[])           # Lista de roles. Si vacío, aplica a todos.
- 
-# ==========================================
-# CONFIGURACIÓN DE BASE DE DATOS SEGURA Y STORAGE
-# ==========================================
-from supabase import create_client, Client
+    nombre_evidencia = Column(String, nullable=False) 
+    tipo_persona = Column(String, nullable=False)     
+    roles_aplica = Column(JSON, default=list)           
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SECRET_KEY")
-
-# Respaldo para entorno local (leyendo .secret)
-if not DATABASE_URL or not SUPABASE_URL or not SUPABASE_KEY:
+# ==========================================
+# CONFIGURACIÓN SEGURA (CACHEADA Y SCOPEADA)
+# ==========================================
+@st.cache_resource
+def get_engine():
+    """Crea y cachea el motor de BD para evitar fugas de conexión y latencia"""
+    DATABASE_URL = os.getenv("DATABASE_URL")
     secrets = dotenv_values(".secret")
-    DATABASE_URL = DATABASE_URL or secrets.get("DATABASE_URL")
-    SUPABASE_URL = SUPABASE_URL or secrets.get("SUPABASE_URL")
-    SUPABASE_KEY = SUPABASE_KEY or secrets.get("SUPABASE_SECRET_KEY")
-
-# 1. Configuración de Storage (Supabase Client)
-supabase_client: Client = None
-if SUPABASE_URL and SUPABASE_KEY:
-    supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
-else:
-    print("ADVERTENCIA: Faltan credenciales de Supabase. El almacenamiento de archivos fallará.")
-
-# 2. Configuración de PostgreSQL (SQLAlchemy)
-if DATABASE_URL:
+    if not DATABASE_URL:
+        DATABASE_URL = secrets.get("DATABASE_URL")
+    
+    if not DATABASE_URL:
+        # Falla ruidosa por seguridad (Review 3)
+        raise ValueError("CRÍTICO: No se proporcionó DATABASE_URL. El sistema no usará SQLite como fallback en producción.")
+        
     if "[PWD]" in DATABASE_URL:
         db_pwd = os.getenv("SUPABASE_PROD") or secrets.get("SUPABASE_PROD")
-        if db_pwd:
-            DATABASE_URL = DATABASE_URL.replace("[PWD]", db_pwd)
-        else:
-            raise ValueError("ERROR CRÍTICO: No se encontró la contraseña")
+        DATABASE_URL = DATABASE_URL.replace("[PWD]", db_pwd)
 
     if DATABASE_URL.startswith("postgres://"):
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
         
-    engine = create_engine(DATABASE_URL, echo=False)
-else:
-    engine = create_engine("sqlite:///app_database.sqlite3", echo=False)
+    # pool_pre_ping evita el "MySQL has gone away" / Desconexiones
+    return create_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
 
+@st.cache_resource
+def get_supabase_client():
+    SUPABASE_URL = os.getenv("SUPABASE_URL") or dotenv_values(".secret").get("SUPABASE_URL")
+    SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") or dotenv_values(".secret").get("SUPABASE_SERVICE_KEY")
+    if SUPABASE_URL and SUPABASE_KEY:
+        return create_client(SUPABASE_URL, SUPABASE_KEY)
+    return None
+
+engine = get_engine()
+supabase_client = get_supabase_client()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+@contextmanager
+def db_session_scope():
+    """Manejador de contexto para asegurar que la BD SIEMPRE se cierre"""
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+def get_db_session():
+    """Genera y retorna una sesión de base de datos activa."""
+    return SessionLocal()
 
 def init_db():
     Base.metadata.create_all(bind=engine)
