@@ -112,11 +112,17 @@ def render_gestor(db, user_actual, tab_expedientes):
                         raw = getattr(field, "configuracion_json", None) or {}
                         return raw if isinstance(raw, dict) else {}
 
+                    def _field_order(field):
+                        try:
+                            return int(_field_config(field).get("order", 100) or 100)
+                        except (TypeError, ValueError):
+                            return 100
+
                     campos_ordenados = sorted(
                         campos_aplicables,
                         key=lambda field: (
                             str(_field_config(field).get("section") or "General"),
-                            int(_field_config(field).get("order", 100) or 100),
+                            _field_order(field),
                             field.id
                         )
                     )
