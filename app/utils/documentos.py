@@ -6,6 +6,7 @@ import subprocess
 import openpyxl
 from pypdf import PdfReader, PdfWriter
 from docxtpl import DocxTemplate
+from app.utils.template_filters import mark_filter, prefix_filter
 
 def procesar_excel(file_bytes: bytes, context: dict) -> bytes:
     """Abre un Excel en memoria, busca las etiquetas {{llave}} y las reemplaza"""
@@ -28,6 +29,8 @@ def procesar_excel(file_bytes: bytes, context: dict) -> bytes:
 def procesar_word(file_bytes: bytes, context: dict) -> bytes:
     """Renderiza la plantilla Word usando Jinja2"""
     doc = DocxTemplate(io.BytesIO(file_bytes))
+    doc.jinja_env.filters["mark"] = mark_filter
+    doc.jinja_env.filters["prefix"] = prefix_filter
     doc.render(context)
     out = io.BytesIO()
     doc.save(out)
