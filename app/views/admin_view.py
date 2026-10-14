@@ -1,4 +1,5 @@
 import streamlit as st
+import json
 import pandas as pd
 from app.models.database import Usuario, Proyecto, Persona, Catalogo, Participacion, JerarquiaParticipacion, DocumentoExpediente, PlantillaFormato, ConfiguracionCampos, ConfiguracionEvidencia, UsuarioPersonaGestor, supabase_client
 from app.utils.auth import generar_hash
@@ -767,16 +768,24 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                             roles_sel = st.multiselect("Aplica a Roles:", options=roles_disponibles)
                             opciones = st.text_input("Opciones (separadas por coma)")
                             regla = st.selectbox("Regla de Validación", ["ninguna", "max_90_dias", "vigente_futuro"])
+                            config_texto = st.text_area("Configuración avanzada (JSON)", value='{"section":"General","order":10,"help":"","required":false,"default":null,"visible_if":null,"options_map":null}', help='visible_if: {"field":"otra_llave","equals":"valor"}. options_map: {"depends_on":"otra_llave","map":{"valor":["opción 1","opción 2"]}}.')
                             
                             if st.form_submit_button("Guardar Campo") and nombre and llave:
-                                opc_lista = [o.strip() for o in opciones.split(",")] if tipo_input == "Opciones" and opciones else []
-                                db.add(ConfiguracionCampos(
-                                    nombre_mostrar=nombre, llave_jinja=llave.lower().replace(" ", "_"),
-                                    tipo_input=tipo_input, opciones_json=opc_lista, tipo_persona=tipo_pers,
-                                    roles_aplica=roles_sel, regla_validacion=regla
-                                ))
-                                db.commit()
-                                st.rerun()
+                                try:
+                                    config_campo = json.loads(config_texto or "{}")
+                                    if not isinstance(config_campo, dict):
+                                        raise ValueError("La configuración debe ser un objeto JSON.")
+                                except (json.JSONDecodeError, ValueError) as exc:
+                                    st.error(f"Configuración JSON inválida: {exc}")
+                                else:
+                                    opc_lista = [o.strip() for o in opciones.split(",") if o.strip()] if tipo_input in ("Opciones", "Selección única", "Selección múltiple") and opciones else []
+                                    db.add(ConfiguracionCampos(
+                                        nombre_mostrar=nombre, llave_jinja=llave.lower().replace(" ", "_"),
+                                        tipo_input=tipo_input, opciones_json=opc_lista, tipo_persona=tipo_pers,
+                                        roles_aplica=roles_sel, regla_validacion=regla, configuracion_json=config_campo
+                                    ))
+                                    db.commit()
+                                    st.rerun()
 
                     # Lista de Campos
                     campos_registrados = db.query(ConfiguracionCampos).all()
@@ -837,23 +846,32 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                         col5, col6 = st.columns(2)
                         opciones = col5.text_input("Opciones (Separadas por coma, solo si elegiste 'Opciones')")
                         regla = col6.selectbox("Regla de Validación Matemática", ["ninguna", "max_90_dias (Antigüedad)", "vigente_futuro (Caducidad)"])
+                        config_texto = st.text_area("Configuración avanzada (JSON)", value='{"section":"General","order":10,"help":"","required":false,"default":null,"visible_if":null,"options_map":null}', help='visible_if: {"field":"otra_llave","equals":"valor"}. options_map: {"depends_on":"otra_llave","map":{"valor":["opción 1","opción 2"]}}.')
                         
                         if st.form_submit_button("Guardar Campo"):
                             if nombre and llave:
-                                opc_lista = [o.strip() for o in opciones.split(",")] if tipo_input == "Opciones" and opciones else []
-                                nuevo_campo = ConfiguracionCampos(
-                                    nombre_mostrar=nombre,
-                                    llave_jinja=llave.lower().replace(" ", "_"),
-                                    tipo_input=tipo_input,
-                                    opciones_json=opc_lista,
-                                    tipo_persona=tipo_pers,
-                                    roles_aplica=roles_sel,
-                                    regla_validacion=regla.split(" ")[0] # Guardamos solo la llave ("max_90_dias")
-                                )
-                                db.add(nuevo_campo)
-                                db.commit()
-                                st.success("Campo creado exitosamente.")
-                                st.rerun()
+                                try:
+                                    config_campo = json.loads(config_texto or "{}")
+                                    if not isinstance(config_campo, dict):
+                                        raise ValueError("La configuración debe ser un objeto JSON.")
+                                except (json.JSONDecodeError, ValueError) as exc:
+                                    st.error(f"Configuración JSON inválida: {exc}")
+                                else:
+                                    opc_lista = [o.strip() for o in opciones.split(",") if o.strip()] if tipo_input in ("Opciones", "Selección única", "Selección múltiple") and opciones else []
+                                    nuevo_campo = ConfiguracionCampos(
+                                        nombre_mostrar=nombre,
+                                        llave_jinja=llave.lower().replace(" ", "_"),
+                                        tipo_input=tipo_input,
+                                        opciones_json=opc_lista,
+                                        tipo_persona=tipo_pers,
+                                        roles_aplica=roles_sel,
+                                        regla_validacion=regla.split(" ")[0],
+                                        configuracion_json=config_campo
+                                    )
+                                    db.add(nuevo_campo)
+                                    db.commit()
+                                    st.success("Campo creado exitosamente.")
+                                    st.rerun()
                             else:
                                 st.error("El nombre y la variable Jinja son obligatorios.")
 
