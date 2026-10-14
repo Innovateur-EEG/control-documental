@@ -746,151 +746,240 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                                     st.rerun()
             
             # =========================================================
-            # --- GESTOR DE CAMPOS Y EVIDENCIAS ---
+            # --- VARIABLES Y EVIDENCIAS: TABLAS CRUD ---
             # =========================================================
             with sub_vars:
-                st.subheader("Configuración de Variables y Evidencias")
-                st.write("Defina qué información (texto) y qué archivos (PDFs/Imágenes) se solicitarán dinámicamente a los usuarios.")
-                
-                
-                roles_disponibles = [c.valor for c in db.query(Catalogo).filter_by(categoria="Rol_Participacion").all()]
-                
-                col_izq, col_der = st.columns(2)
-                
-                with col_izq:
-                    st.markdown("### 1️⃣ Campos de Texto (Variables)")
-                    with st.expander("➕ Crear Nuevo Campo Obligatorio"):
-                        with st.form("form_nuevo_campo_dinamico"):
-                            nombre = st.text_input("Nombre a mostrar (Ej. CURP)")
-                            llave = st.text_input("Variable Jinja (Ej. curp)")
-                            tipo_input = st.selectbox("Tipo de Dato", ["Texto", "Fecha", "Número", "Opciones", "Selección única", "Selección múltiple", "Casilla"])
-                            tipo_pers = st.selectbox("Aplica para:", ["Ambas", "Fisica", "Moral"], key="tp_campo")
-                            roles_sel = st.multiselect("Aplica a Roles:", options=roles_disponibles)
-                            opciones = st.text_input("Opciones (separadas por coma)")
-                            regla = st.selectbox("Regla de Validación", ["ninguna", "max_90_dias", "vigente_futuro"])
-                            config_texto = st.text_area("Configuración avanzada (JSON)", value='{"section":"General","order":10,"help":"","required":false,"default":null,"visible_if":null,"options_map":null}', help='visible_if: {"field":"otra_llave","equals":"valor"}. options_map: {"depends_on":"otra_llave","map":{"valor":["opción 1","opción 2"]}}.')
-                            
-                            if st.form_submit_button("Guardar Campo") and nombre and llave:
-                                try:
-                                    config_campo = json.loads(config_texto or "{}")
-                                    if not isinstance(config_campo, dict):
-                                        raise ValueError("La configuración debe ser un objeto JSON.")
-                                except (json.JSONDecodeError, ValueError) as exc:
-                                    st.error(f"Configuración JSON inválida: {exc}")
-                                else:
-                                    opc_lista = [o.strip() for o in opciones.split(",") if o.strip()] if tipo_input in ("Opciones", "Selección única", "Selección múltiple") and opciones else []
-                                    db.add(ConfiguracionCampos(
-                                        nombre_mostrar=nombre, llave_jinja=llave.lower().replace(" ", "_"),
-                                        tipo_input=tipo_input, opciones_json=opc_lista, tipo_persona=tipo_pers,
-                                        roles_aplica=roles_sel, regla_validacion=regla, configuracion_json=config_campo
-                                    ))
-                                    db.commit()
-                                    st.rerun()
+                st.subheader("Variables y evidencias")
+                st.caption("Edite los valores directamente en las tablas. Use + para agregar filas; elimine filas desde el editor. Los cambios se aplican al guardar.")
 
-                    # Lista de Campos
-                    campos_registrados = db.query(ConfiguracionCampos).all()
-                    for c in campos_registrados:
-                        with st.expander(f"📌 {c.nombre_mostrar} `{{{{{c.llave_jinja}}}}}`"):
-                            st.write(f"Input: {c.tipo_input} | Persona: {c.tipo_persona}")
-                            if st.button("🗑️ Eliminar", key=f"del_campo_txt_{c.id}"):
-                                db.delete(c)
-                                db.commit()
-                                st.rerun()
+                roles_disponibles = [
+                    c.valor for c in db.query(Catalogo)
+                    .filter_by(categoria="Rol_Participacion").all()
+                ]
+                tipos_persona = ["Ambas", "Fisica", "Moral"]
+                tipos_campo = [
+                    "Texto", "Fecha", "Número", "Opciones",
+                    "Selección única", "Selección múltiple", "Casilla"
+                ]
+                reglas_validacion = ["ninguna", "max_90_dias", "vigente_futuro"]
 
-                with col_der:
-                    st.markdown("### 2️⃣ Evidencias Adjuntas (Archivos)")
-                    with st.expander("➕ Crear Nueva Evidencia Requerida"):
-                        with st.form("form_nueva_evidencia"):
-                            nombre_evidencia = st.text_input("Nombre del Documento (Ej. Identificación Oficial)")
-                            tipo_pers_ev = st.selectbox("Aplica para:", ["Ambas", "Fisica", "Moral"], key="tp_evidencia")
-                            roles_sel_ev = st.multiselect("Aplica a Roles:", options=roles_disponibles, key="roles_ev")
-                            
-                            if st.form_submit_button("Guardar Evidencia") and nombre_evidencia:
-                                db.add(ConfiguracionEvidencia(
-                                    nombre_evidencia=nombre_evidencia,
-                                    tipo_persona=tipo_pers_ev,
-                                    roles_aplica=roles_sel_ev
-                                ))
-                                db.commit()
-                                st.rerun()
+                # --- Campos / variables ---
+                st.markdown("### Variables del formulario")
+                campos_registrados = db.query(ConfiguracionCampos).order_by(
+                    ConfiguracionCampos.id
+                ).all()
+                df_campos = pd.DataFrame([
+                    {
+                        "ID": c.id,
+                        "Nombre": c.nombre_mostrar,
+                        "Variable Jinja": c.llave_jinja,
+                        "Tipo": c.tipo_input,
+                        "Opciones (coma)": ", ".join(c.opciones_json or []),
+                        "Tipo persona": c.tipo_persona,
+                        "Roles (coma)": ", ".join(c.roles_aplica or []),
+                        "Validación": c.regla_validacion or "ninguna",
+                        "Configuración JSON": json.dumps(
+                            c.configuracion_json or {}, ensure_ascii=False
+                        ),
+                    }
+                    for c in campos_registrados
+                ], columns=[
+                    "ID", "Nombre", "Variable Jinja", "Tipo", "Opciones (coma)",
+                    "Tipo persona", "Roles (coma)", "Validación", "Configuración JSON"
+                ])
 
-                    # Lista de Evidencias
-                    evidencias_registradas = db.query(ConfiguracionEvidencia).all()
-                    for ev in evidencias_registradas:
-                        with st.expander(f"📎 {ev.nombre_evidencia}"):
-                            st.write(f"Persona: {ev.tipo_persona} | Roles: {', '.join(ev.roles_aplica) if ev.roles_aplica else 'Todos'}")
-                            if st.button("🗑️ Eliminar", key=f"del_ev_adj_{ev.id}"):
-                                db.delete(ev)
-                                db.commit()
-                                st.rerun()
-                
+                df_campos_editado = st.data_editor(
+                    df_campos,
+                    num_rows="dynamic",
+                    hide_index=True,
+                    use_container_width=True,
+                    key="variables_crud_editor",
+                    disabled=["ID"],
+                    column_config={
+                        "ID": st.column_config.NumberColumn("ID", disabled=True),
+                        "Nombre": st.column_config.TextColumn("Nombre", required=True),
+                        "Variable Jinja": st.column_config.TextColumn("Variable Jinja", required=True),
+                        "Tipo": st.column_config.SelectboxColumn(
+                            "Tipo", options=tipos_campo, required=True
+                        ),
+                        "Tipo persona": st.column_config.SelectboxColumn(
+                            "Tipo persona", options=tipos_persona, required=True
+                        ),
+                        "Validación": st.column_config.SelectboxColumn(
+                            "Validación", options=reglas_validacion
+                        ),
+                        "Configuración JSON": st.column_config.TextColumn(
+                            "Configuración JSON", width="large"
+                        ),
+                    },
+                )
+                if st.button("Guardar cambios de variables", key="guardar_variables_crud"):
+                    try:
+                        rows = df_campos_editado.to_dict("records")
+                        existentes = {c.id: c for c in campos_registrados}
+                        ids_presentes = set()
+                        cambios = []
+                        for numero_fila, row in enumerate(rows, start=1):
+                            nombre = str(row.get("Nombre") or "").strip()
+                            llave = str(row.get("Variable Jinja") or "").strip().lower().replace(" ", "_")
+                            tipo = str(row.get("Tipo") or "").strip()
+                            tipo_persona = str(row.get("Tipo persona") or "").strip()
+                            opciones_txt = str(row.get("Opciones (coma)") or "").strip()
+                            roles_txt = str(row.get("Roles (coma)") or "").strip()
+                            regla = str(row.get("Validación") or "ninguna").strip()
+                            config_txt = str(row.get("Configuración JSON") or "{}").strip() or "{}"
+                            id_val = row.get("ID")
+                            id_registro = None if pd.isna(id_val) else int(id_val)
 
-                # --- GESTOR DE CAMPOS Y VALIDACIONES ---
-                st.subheader("Configuración de Campos y Validaciones")
-                st.write("Defina qué información se solicitará a los usuarios en el portal, la etiqueta Jinja que la vinculará a Word/Excel, y si requiere pasar por una regla matemática.")
-                
-                roles_disponibles = [c.valor for c in db.query(Catalogo).filter_by(categoria="Rol_Participacion").all()]
-                
-                with st.expander("➕ Crear Nuevo Campo Obligatorio"):
-                    with st.form("form_nuevo_campo"):
-                        col1, col2 = st.columns(2)
-                        nombre = col1.text_input("Nombre a mostrar en formulario (Ej. Fecha de Comprobante)")
-                        llave = col2.text_input("Variable en Plantilla (Ej. fecha_comprobante)")
-                        
-                        col3, col4 = st.columns(2)
-                        tipo_input = col3.selectbox("Tipo de Dato (Input)", ["Texto", "Fecha", "Número", "Opciones", "Selección única", "Selección múltiple", "Casilla"])
-                        tipo_pers = col4.selectbox("Aplica para el tipo de persona:", ["Ambas", "Fisica", "Moral"])
-                        
-                        roles_sel = st.multiselect("Aplica a los Roles:", options=roles_disponibles, help="Si lo dejas vacío, se le pedirá a todos los roles.")
-                        
-                        col5, col6 = st.columns(2)
-                        opciones = col5.text_input("Opciones (Separadas por coma, solo si elegiste 'Opciones')")
-                        regla = col6.selectbox("Regla de Validación Matemática", ["ninguna", "max_90_dias (Antigüedad)", "vigente_futuro (Caducidad)"])
-                        config_texto = st.text_area("Configuración avanzada (JSON)", value='{"section":"General","order":10,"help":"","required":false,"default":null,"visible_if":null,"options_map":null}', help='visible_if: {"field":"otra_llave","equals":"valor"}. options_map: {"depends_on":"otra_llave","map":{"valor":["opción 1","opción 2"]}}.')
-                        
-                        if st.form_submit_button("Guardar Campo"):
-                            if nombre and llave:
-                                try:
-                                    config_campo = json.loads(config_texto or "{}")
-                                    if not isinstance(config_campo, dict):
-                                        raise ValueError("La configuración debe ser un objeto JSON.")
-                                except (json.JSONDecodeError, ValueError) as exc:
-                                    st.error(f"Configuración JSON inválida: {exc}")
-                                else:
-                                    opc_lista = [o.strip() for o in opciones.split(",") if o.strip()] if tipo_input in ("Opciones", "Selección única", "Selección múltiple") and opciones else []
-                                    nuevo_campo = ConfiguracionCampos(
-                                        nombre_mostrar=nombre,
-                                        llave_jinja=llave.lower().replace(" ", "_"),
-                                        tipo_input=tipo_input,
-                                        opciones_json=opc_lista,
-                                        tipo_persona=tipo_pers,
-                                        roles_aplica=roles_sel,
-                                        regla_validacion=regla.split(" ")[0],
-                                        configuracion_json=config_campo
-                                    )
-                                    db.add(nuevo_campo)
-                                    db.commit()
-                                    st.success("Campo creado exitosamente.")
-                                    st.rerun()
-                            else:
-                                st.error("El nombre y la variable Jinja son obligatorios.")
+                            fila_vacia = not any([
+                                nombre, llave, opciones_txt, roles_txt,
+                                config_txt not in ("{}", "nan", "None"),
+                            ]) and not id_registro
+                            if fila_vacia:
+                                continue
+                            if not nombre or not llave:
+                                raise ValueError(f"Fila {numero_fila}: Nombre y Variable Jinja son obligatorios.")
+                            if tipo not in tipos_campo:
+                                raise ValueError(f"Fila {numero_fila}: Tipo de campo no válido.")
+                            if tipo_persona not in tipos_persona:
+                                raise ValueError(f"Fila {numero_fila}: Tipo persona no válido.")
+                            if regla not in reglas_validacion:
+                                raise ValueError(f"Fila {numero_fila}: Regla de validación no válida.")
+                            try:
+                                config_json = json.loads(config_txt)
+                            except json.JSONDecodeError as exc:
+                                raise ValueError(f"Fila {numero_fila}: Configuración JSON inválida ({exc.msg}).")
+                            if not isinstance(config_json, dict):
+                                raise ValueError(f"Fila {numero_fila}: Configuración JSON debe ser un objeto.")
+                            if id_registro is not None and id_registro not in existentes:
+                                raise ValueError(f"Fila {numero_fila}: ID de registro desconocido.")
+                            if id_registro is not None:
+                                ids_presentes.add(id_registro)
+                            cambios.append({
+                                "id": id_registro,
+                                "nombre": nombre,
+                                "llave": llave,
+                                "tipo": tipo,
+                                "opciones": [v.strip() for v in opciones_txt.split(",") if v.strip()],
+                                "tipo_persona": tipo_persona,
+                                "roles": [v.strip() for v in roles_txt.split(",") if v.strip()],
+                                "regla": regla,
+                                "config": config_json,
+                            })
 
-                # Listado de Campos
-                campos_registrados = db.query(ConfiguracionCampos).all()
-                if campos_registrados:
-                    st.write("**Catálogo de Campos Configurados:**")
-                    for c in campos_registrados:
-                        with st.expander(f"📌 {c.nombre_mostrar} `{{{{{c.llave_jinja}}}}}`"):
-                            st.write(f"**Input:** {c.tipo_input} | **Aplica a:** {c.tipo_persona} | **Validación:** {c.regla_validacion}")
-                            st.write(f"**Roles Específicos:** {', '.join(c.roles_aplica) if c.roles_aplica else 'Todos los roles'}")
-                            if c.opciones_json:
-                                st.write(f"**Valores:** {', '.join(c.opciones_json)}")
-                                
-                            if st.button("🗑️ Eliminar", key=f"del_campo_{c.id}"):
-                                db.delete(c)
-                                db.commit()
-                                st.rerun()
-            
+                        llaves = [item["llave"] for item in cambios]
+                        if len(llaves) != len(set(llaves)):
+                            raise ValueError("Cada Variable Jinja debe ser única.")
+                        for item in cambios:
+                            registro = existentes.get(item["id"]) if item["id"] is not None else ConfiguracionCampos()
+                            registro.nombre_mostrar = item["nombre"]
+                            registro.llave_jinja = item["llave"]
+                            registro.tipo_input = item["tipo"]
+                            registro.opciones_json = item["opciones"]
+                            registro.tipo_persona = item["tipo_persona"]
+                            registro.roles_aplica = item["roles"]
+                            registro.regla_validacion = item["regla"]
+                            registro.configuracion_json = item["config"]
+                            if item["id"] is None:
+                                db.add(registro)
+                        for registro_id, registro in existentes.items():
+                            if registro_id not in ids_presentes:
+                                db.delete(registro)
+                        db.commit()
+                        st.success("Variables guardadas.")
+                        st.rerun()
+                    except (ValueError, TypeError) as exc:
+                        db.rollback()
+                        st.error(str(exc))
+                    except Exception as exc:
+                        db.rollback()
+                        st.error(f"No se pudieron guardar las variables: {exc}")
+
+                st.caption("Opciones y roles se capturan separados por comas. La configuración JSON puede dejarse como {} si no se requieren reglas adicionales.")
+
+                # --- Evidencias ---
+                st.markdown("### Evidencias adjuntas")
+                evidencias_registradas = db.query(ConfiguracionEvidencia).order_by(
+                    ConfiguracionEvidencia.id
+                ).all()
+                df_evidencias = pd.DataFrame([
+                    {
+                        "ID": e.id,
+                        "Nombre de evidencia": e.nombre_evidencia,
+                        "Tipo persona": e.tipo_persona,
+                        "Roles (coma)": ", ".join(e.roles_aplica or []),
+                    }
+                    for e in evidencias_registradas
+                ], columns=["ID", "Nombre de evidencia", "Tipo persona", "Roles (coma)"])
+
+                df_evidencias_editado = st.data_editor(
+                    df_evidencias,
+                    num_rows="dynamic",
+                    hide_index=True,
+                    use_container_width=True,
+                    key="evidencias_crud_editor",
+                    disabled=["ID"],
+                    column_config={
+                        "ID": st.column_config.NumberColumn("ID", disabled=True),
+                        "Nombre de evidencia": st.column_config.TextColumn(
+                            "Nombre de evidencia", required=True
+                        ),
+                        "Tipo persona": st.column_config.SelectboxColumn(
+                            "Tipo persona", options=tipos_persona, required=True
+                        ),
+                    },
+                )
+                if st.button("Guardar cambios de evidencias", key="guardar_evidencias_crud"):
+                    try:
+                        rows = df_evidencias_editado.to_dict("records")
+                        existentes = {e.id: e for e in evidencias_registradas}
+                        ids_presentes = set()
+                        cambios = []
+                        for numero_fila, row in enumerate(rows, start=1):
+                            nombre = str(row.get("Nombre de evidencia") or "").strip()
+                            tipo_persona = str(row.get("Tipo persona") or "").strip()
+                            roles_txt = str(row.get("Roles (coma)") or "").strip()
+                            id_val = row.get("ID")
+                            id_registro = None if pd.isna(id_val) else int(id_val)
+                            if not nombre and not roles_txt and not id_registro:
+                                continue
+                            if not nombre:
+                                raise ValueError(f"Fila {numero_fila}: el nombre de evidencia es obligatorio.")
+                            if tipo_persona not in tipos_persona:
+                                raise ValueError(f"Fila {numero_fila}: Tipo persona no válido.")
+                            if id_registro is not None and id_registro not in existentes:
+                                raise ValueError(f"Fila {numero_fila}: ID de evidencia desconocido.")
+                            if id_registro is not None:
+                                ids_presentes.add(id_registro)
+                            cambios.append({
+                                "id": id_registro,
+                                "nombre": nombre,
+                                "tipo_persona": tipo_persona,
+                                "roles": [v.strip() for v in roles_txt.split(",") if v.strip()],
+                            })
+                        nombres = [item["nombre"].casefold() for item in cambios]
+                        if len(nombres) != len(set(nombres)):
+                            raise ValueError("Cada nombre de evidencia debe ser único.")
+                        for item in cambios:
+                            registro = existentes.get(item["id"]) if item["id"] is not None else ConfiguracionEvidencia()
+                            registro.nombre_evidencia = item["nombre"]
+                            registro.tipo_persona = item["tipo_persona"]
+                            registro.roles_aplica = item["roles"]
+                            if item["id"] is None:
+                                db.add(registro)
+                        for registro_id, registro in existentes.items():
+                            if registro_id not in ids_presentes:
+                                db.delete(registro)
+                        db.commit()
+                        st.success("Evidencias guardadas.")
+                        st.rerun()
+                    except (ValueError, TypeError) as exc:
+                        db.rollback()
+                        st.error(str(exc))
+                    except Exception as exc:
+                        db.rollback()
+                        st.error(f"No se pudieron guardar las evidencias: {exc}")
+
             # =========================================================
             # --- VARIABLES DE SISTEMA ---
             # =========================================================
