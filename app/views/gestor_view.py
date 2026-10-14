@@ -106,41 +106,83 @@ def render_gestor(db, user_actual, tab_expedientes):
                 campos_aplicables = [c for c in todos_campos if c.tipo_persona in ["Ambas", part.persona.tipo] and (not c.roles_aplica or part.rol in c.roles_aplica)]
                 
                 if campos_aplicables:
+                    # Configuration is metadata-driven. Keep fields in stable section/order sequence.
+                    def _field_config(field):
+                        raw = getattr(field, "configuracion_json", None) or {}
+                        return raw if isinstance(raw, dict) else {}
+
+                    campos_ordenados = sorted(
+                        campos_aplicables,
+                        key=lambda field: (
+                            str(_field_config(field).get("section") or "General"),
+                            int(_field_config(field).get("order", 100) or 100),
+                            field.id
+                        )
+                    )
                     with st.form(f"form_datos_{part.id}"):
-                        cols = st.columns(2)
                         nuevos_datos = {}
-                        for i, c in enumerate(campos_aplicables):
-                            col = cols[i % 2]
-                            val_previo = datos_actuales.get(c.llave_jinja, "")
+                        columnas = st.columns(2)
+                        seccion_actual = None
+                        indice_columna = 0
+                        for c in campos_ordenados:
+                            config = _field_config(c)
+                            seccion = str(config.get("section") or "General").strip() or "General"
+                            if seccion != seccion_actual:
+                                st.markdown(f"#### {seccion}")
+                                seccion_actual = seccion
+                                columnas = st.columns(2)
+                                indice_columna = 0
+
+                            condicion = config.get("visible_if")
+                            if isinstance(condicion, dict) and condicion.get("field"):
+                                clave_condicion = str(condicion["field"])
+                                valor_condicion = nuevos_datos.get(clave_condicion, datos_actuales.get(clave_condicion))
+                                esperado = condicion.get("equals")
+                                if isinstance(valor_condicion, list):
+                                    visible = esperado in valor_condicion
+                                else:
+                                    visible = valor_condicion == esperado
+                                if not visible:
+                                    continue
+
+                            col = columnas[indice_columna % 2]
+                            indice_columna += 1
+                            val_previo = datos_actuales.get(c.llave_jinja, config.get("default"))
+                            ayuda = str(config.get("help") or "") or None
                             with col:
                                 tipo = c.tipo_input
+                                opciones = c.opciones_json or []
+                                mapa_opciones = config.get("options_map")
+                                if isinstance(mapa_opciones, dict) and mapa_opciones.get("depends_on"):
+                                    clave_dep = str(mapa_opciones["depends_on"])
+                                    valor_dep = nuevos_datos.get(clave_dep, datos_actuales.get(clave_dep))
+                                    mapa = mapa_opciones.get("map") or {}
+                                    opciones = mapa.get(str(valor_dep), []) if isinstance(mapa, dict) else []
                                 if tipo == "Texto":
-                                    nuevos_datos[c.llave_jinja] = st.text_input(c.nombre_mostrar, value=str(val_previo or ""), disabled=es_solo_lectura)
+                                    nuevos_datos[c.llave_jinja] = st.text_input(c.nombre_mostrar, value=str(val_previo or ""), help=ayuda, disabled=es_solo_lectura)
                                 elif tipo == "Número":
                                     try:
                                         val_num = float(val_previo) if val_previo not in (None, "") else 0.0
                                     except (TypeError, ValueError):
                                         val_num = 0.0
-                                    nuevos_datos[c.llave_jinja] = st.number_input(c.nombre_mostrar, value=val_num, disabled=es_solo_lectura)
+                                    nuevos_datos[c.llave_jinja] = st.number_input(c.nombre_mostrar, value=val_num, help=ayuda, disabled=es_solo_lectura)
                                 elif tipo in ("Opciones", "Selección única"):
-                                    opciones = c.opciones_json or []
                                     if not opciones:
-                                        st.warning(f"'{c.nombre_mostrar}' no tiene opciones configuradas.")
+                                        st.warning(f"'{c.nombre_mostrar}' no tiene opciones disponibles para la selección actual.")
                                         nuevos_datos[c.llave_jinja] = val_previo
                                     else:
                                         idx = opciones.index(val_previo) if val_previo in opciones else 0
-                                        nuevos_datos[c.llave_jinja] = st.selectbox(c.nombre_mostrar, options=opciones, index=idx, disabled=es_solo_lectura)
+                                        nuevos_datos[c.llave_jinja] = st.selectbox(c.nombre_mostrar, options=opciones, index=idx, help=ayuda, disabled=es_solo_lectura)
                                 elif tipo == "Selección múltiple":
-                                    opciones = c.opciones_json or []
                                     previo = val_previo if isinstance(val_previo, list) else []
                                     seleccion_previa = [v for v in previo if v in opciones]
                                     if not opciones:
-                                        st.warning(f"'{c.nombre_mostrar}' no tiene opciones configuradas.")
+                                        st.warning(f"'{c.nombre_mostrar}' no tiene opciones disponibles para la selección actual.")
                                         nuevos_datos[c.llave_jinja] = previo
                                     else:
-                                        nuevos_datos[c.llave_jinja] = st.multiselect(c.nombre_mostrar, options=opciones, default=seleccion_previa, disabled=es_solo_lectura)
+                                        nuevos_datos[c.llave_jinja] = st.multiselect(c.nombre_mostrar, options=opciones, default=seleccion_previa, help=ayuda, disabled=es_solo_lectura)
                                 elif tipo == "Casilla":
-                                    nuevos_datos[c.llave_jinja] = st.checkbox(c.nombre_mostrar, value=bool(val_previo), disabled=es_solo_lectura)
+                                    nuevos_datos[c.llave_jinja] = st.checkbox(c.nombre_mostrar, value=bool(val_previo), help=ayuda, disabled=es_solo_lectura)
                                 elif tipo == "Fecha":
                                     val_fecha = datetime.date.today()
                                     if val_previo:
@@ -148,7 +190,7 @@ def render_gestor(db, user_actual, tab_expedientes):
                                             val_fecha = datetime.datetime.strptime(str(val_previo), "%Y-%m-%d").date()
                                         except (TypeError, ValueError):
                                             pass
-                                    nuevos_datos[c.llave_jinja] = st.date_input(c.nombre_mostrar, value=val_fecha, disabled=es_solo_lectura)
+                                    nuevos_datos[c.llave_jinja] = st.date_input(c.nombre_mostrar, value=val_fecha, help=ayuda, disabled=es_solo_lectura)
                                 else:
                                     st.warning(f"Tipo de campo no compatible: '{tipo}' ({c.nombre_mostrar}).")
                                     nuevos_datos[c.llave_jinja] = val_previo
@@ -157,8 +199,13 @@ def render_gestor(db, user_actual, tab_expedientes):
 
                     if submit_btn and not es_solo_lectura:
                         errores = []
-                        for c in campos_aplicables:
+                        for c in campos_ordenados:
+                            if c.llave_jinja not in nuevos_datos:
+                                continue
                             val = nuevos_datos.get(c.llave_jinja)
+                            config = _field_config(c)
+                            if config.get("required", False) and (val is None or val == "" or val == [] or (c.tipo_input == "Casilla" and val is not True)):
+                                errores.append(f"❌ '{c.nombre_mostrar}' es obligatorio.")
                             if c.tipo_input == "Fecha" and isinstance(val, datetime.date):
                                 if c.regla_validacion == "max_90_dias":
                                     diff = (datetime.date.today() - val).days
@@ -173,7 +220,7 @@ def render_gestor(db, user_actual, tab_expedientes):
                             for e in errores:
                                 st.error(e)
                         else:
-                            # Convert date values, then merge so fields managed elsewhere are preserved.
+                            # Merge only visible/submitted fields; preserve unrelated keys and hidden conditional values.
                             datos_guardados = dict(datos_actuales)
                             for k, v in nuevos_datos.items():
                                 datos_guardados[k] = v.strftime("%Y-%m-%d") if isinstance(v, datetime.date) else v
