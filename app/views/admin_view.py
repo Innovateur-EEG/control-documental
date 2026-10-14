@@ -1,9 +1,22 @@
 import streamlit as st
 import json
 import pandas as pd
+import os
+import re
+import unicodedata
+import uuid
 from app.models.database import Usuario, Proyecto, Persona, Catalogo, Participacion, JerarquiaParticipacion, DocumentoExpediente, PlantillaFormato, ConfiguracionCampos, ConfiguracionEvidencia, UsuarioPersonaGestor, supabase_client
 from app.utils.auth import generar_hash
 from sqlalchemy.orm.attributes import flag_modified
+
+
+def _storage_safe_filename(filename: str) -> str:
+    """Create an ASCII-only storage filename while preserving its extension."""
+    base, extension = os.path.splitext(os.path.basename(filename or "template"))
+    normalized = unicodedata.normalize("NFKD", base).encode("ascii", "ignore").decode("ascii")
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", normalized).strip("-.")
+    return f"{normalized or 'template'}{extension.lower()}"
+
 
 def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyectos, mis_proy_ids):
     # =========================================================
@@ -691,7 +704,7 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                         if st.form_submit_button("Subir y Crear Plantilla"):
                             if nombre_tpl and roles_sel and archivo_tpl:
                                 # 1. Guardar el archivo físicamente EN SUPABASE STORAGE
-                                ruta_guardado = f"templates/{archivo_tpl.name}"
+                                nombre_storage = _storage_safe_filename(archivo_tpl.name)\n                                ruta_guardado = f"templates/{uuid.uuid4().hex[:8]}-{nombre_storage}"
                                 try:
                                     supabase_client.storage.from_("expedientes").upload(
                                         file=archivo_tpl.getvalue(),
