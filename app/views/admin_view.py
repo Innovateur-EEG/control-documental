@@ -704,7 +704,8 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                         if st.form_submit_button("Subir y Crear Plantilla"):
                             if nombre_tpl and roles_sel and archivo_tpl:
                                 # 1. Guardar el archivo físicamente EN SUPABASE STORAGE
-                                nombre_storage = _storage_safe_filename(archivo_tpl.name)\n                                ruta_guardado = f"templates/{uuid.uuid4().hex[:8]}-{nombre_storage}"
+                                nombre_storage = _storage_safe_filename(archivo_tpl.name)
+                                ruta_guardado = f"templates/{uuid.uuid4().hex[:8]}-{nombre_storage}"
                                 try:
                                     supabase_client.storage.from_("expedientes").upload(
                                         file=archivo_tpl.getvalue(),
