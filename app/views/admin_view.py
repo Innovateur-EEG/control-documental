@@ -960,6 +960,26 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                         nombres = [item["nombre"].casefold() for item in cambios]
                         if len(nombres) != len(set(nombres)):
                             raise ValueError("Cada nombre de evidencia debe ser único.")
+
+                        # Evidence documents are associated by document name, not by a foreign key.
+                        # Block renames/deletions that would make existing uploads disappear from the UI.
+                        for registro_id, registro in existentes.items():
+                            item_actualizado = next(
+                                (item for item in cambios if item["id"] == registro_id), None
+                            )
+                            nombre_nuevo = item_actualizado["nombre"] if item_actualizado else None
+                            if nombre_nuevo != registro.nombre_evidencia:
+                                evidencia_en_uso = db.query(DocumentoExpediente).filter_by(
+                                    categoria_documento="Evidencia_Adjunta",
+                                    tipo_documento=registro.nombre_evidencia,
+                                ).first()
+                                if evidencia_en_uso:
+                                    raise ValueError(
+                                        f"No se puede renombrar o eliminar '{registro.nombre_evidencia}' "
+                                        "porque ya tiene archivos registrados. Mantenga el nombre actual "
+                                        "para conservar la trazabilidad de esos archivos."
+                                    )
+
                         for item in cambios:
                             registro = existentes.get(item["id"]) if item["id"] is not None else ConfiguracionEvidencia()
                             registro.nombre_evidencia = item["nombre"]
