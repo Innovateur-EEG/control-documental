@@ -7,6 +7,7 @@ _.python.venv = { path = ".venv", create = true }
 [tasks]
 setup = "pip install -r requirements.txt"
 db-init = "python scripts/init_db.py"
+db-migrate = "python scripts/migrate_db.py"
 db-seed = "python scripts/seed_db.py"
 dev = "streamlit run app/main.py"
 create-template = "python scripts/crear_plantilla.py"
