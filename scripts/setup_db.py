@@ -2,6 +2,11 @@
 
 Run with: mise run db-setup
 """
+import os
+import sys
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from app.models.database import init_db
 from scripts.migrate_db import main as migrate_main
 from scripts.seed_db import main as seed_main
