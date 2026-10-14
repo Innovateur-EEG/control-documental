@@ -184,7 +184,7 @@ def render_gestor(db, user_actual, tab_expedientes):
                                     nuevos_datos[c.llave_jinja] = val_previo
                                 else:
                                     if widget_key in st.session_state and st.session_state[widget_key] not in opciones:
-                                        st.session_state[widget_key] = opciones[0]
+                                        del st.session_state[widget_key]
                                     idx = opciones.index(val_previo) if val_previo in opciones else 0
                                     nuevos_datos[c.llave_jinja] = st.selectbox(c.nombre_mostrar, options=opciones, index=idx, help=ayuda, disabled=es_solo_lectura, key=widget_key)
                             elif tipo == "Selección múltiple":
@@ -194,8 +194,8 @@ def render_gestor(db, user_actual, tab_expedientes):
                                     st.warning(f"'{c.nombre_mostrar}' no tiene opciones disponibles para la selección actual.")
                                     nuevos_datos[c.llave_jinja] = previo
                                 else:
-                                    if widget_key in st.session_state:
-                                        st.session_state[widget_key] = [v for v in st.session_state[widget_key] if v in opciones]
+                                    if widget_key in st.session_state and any(v not in opciones for v in st.session_state[widget_key]):
+                                        del st.session_state[widget_key]
                                     nuevos_datos[c.llave_jinja] = st.multiselect(c.nombre_mostrar, options=opciones, default=seleccion_previa, help=ayuda, disabled=es_solo_lectura, key=widget_key)
                             elif tipo == "Casilla":
                                 nuevos_datos[c.llave_jinja] = st.checkbox(c.nombre_mostrar, value=bool(val_previo), help=ayuda, disabled=es_solo_lectura, key=widget_key)
