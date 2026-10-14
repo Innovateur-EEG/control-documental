@@ -422,22 +422,46 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                                         st.success("Accesos desvinculados.")
                                         st.rerun()
 
-                    # 4. Formulario de Vinculación Rápida
-                    st.divider()
-                    with st.expander("➕ Vincular Persona / Entidad Existente al Proyecto", expanded=False):
-                        if roles_disponibles:
-                            with st.form("form_vinc_exist"):
-                                proy_target = st.selectbox("Proyecto destino:", options=[p.id for p in proyectos_activos], format_func=lambda x: proy_dict.get(x, ""))
-                                p_catalogo = db.query(Persona).all()
-                                p_id_vinc = st.selectbox("Persona:", options=[p.id for p in p_catalogo], format_func=lambda x: next(f"{p.razon_social_nombre} ({p.tipo})" for p in p_catalogo if p.id == x))
-                                r_vinc = st.selectbox("Rol:", options=roles_disponibles)
-                                if st.form_submit_button("Vincular al Proyecto"):
-                                    if not db.query(Participacion).filter_by(proyecto_id=proy_target, persona_id=p_id_vinc).first():
-                                        db.add(Participacion(proyecto_id=proy_target, persona_id=p_id_vinc, rol=r_vinc))
-                                        db.commit()
-                                        st.rerun()
-                                    else:
-                                        st.warning("Esta persona ya está en ese proyecto.")
+                # 4. Formulario de Vinculación Rápida
+                # Keep this available even when a project has no participations yet,
+                # so a fresh project can be initialized through the UI.
+                st.divider()
+                with st.expander("➕ Vincular Persona / Entidad Existente al Proyecto", expanded=False):
+                    p_catalogo = db.query(Persona).order_by(Persona.razon_social_nombre).all()
+                    if not roles_disponibles:
+                        st.warning("No hay roles configurados en Catálogos. Agregue valores en 'Catálogos' antes de vincular personas.")
+                    elif not p_catalogo:
+                        st.warning("El Catálogo Maestro está vacío. Agregue primero una persona o entidad.")
+                    else:
+                        with st.form("form_vinc_exist"):
+                            proy_target = st.selectbox(
+                                "Proyecto destino:",
+                                options=[p.id for p in proyectos_activos],
+                                format_func=lambda x: proy_dict.get(x, "")
+                            )
+                            p_id_vinc = st.selectbox(
+                                "Persona:",
+                                options=[p.id for p in p_catalogo],
+                                format_func=lambda x: next(
+                                    f"{p.razon_social_nombre} ({p.tipo})"
+                                    for p in p_catalogo if p.id == x
+                                )
+                            )
+                            r_vinc = st.selectbox("Rol:", options=roles_disponibles)
+                            if st.form_submit_button("Vincular al Proyecto"):
+                                if not db.query(Participacion).filter_by(
+                                    proyecto_id=proy_target, persona_id=p_id_vinc
+                                ).first():
+                                    db.add(Participacion(
+                                        proyecto_id=proy_target,
+                                        persona_id=p_id_vinc,
+                                        rol=r_vinc
+                                    ))
+                                    db.commit()
+                                    st.rerun()
+                                else:
+                                    st.warning("Esta persona ya está en ese proyecto.")
+
                 # =================================================================
                 # NUEVA SECCIÓN: CATÁLOGO DE PERSONAS (Editable con agregaciones)
                 # =================================================================
