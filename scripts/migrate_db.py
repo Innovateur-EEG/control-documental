@@ -3,8 +3,11 @@
 Run with: mise run db-migrate
 This script is intentionally idempotent and does not delete or recreate data.
 """
+import sys
+import os
 from sqlalchemy import inspect, text
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.models.database import get_engine
 
 
