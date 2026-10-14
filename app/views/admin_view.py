@@ -762,7 +762,7 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                         with st.form("form_nuevo_campo_dinamico"):
                             nombre = st.text_input("Nombre a mostrar (Ej. CURP)")
                             llave = st.text_input("Variable Jinja (Ej. curp)")
-                            tipo_input = st.selectbox("Tipo de Dato", ["Texto", "Fecha", "Número", "Opciones"])
+                            tipo_input = st.selectbox("Tipo de Dato", ["Texto", "Fecha", "Número", "Opciones", "Selección única", "Selección múltiple", "Casilla"])
                             tipo_pers = st.selectbox("Aplica para:", ["Ambas", "Fisica", "Moral"], key="tp_campo")
                             roles_sel = st.multiselect("Aplica a Roles:", options=roles_disponibles)
                             opciones = st.text_input("Opciones (separadas por coma)")
@@ -829,7 +829,7 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                         llave = col2.text_input("Variable en Plantilla (Ej. fecha_comprobante)")
                         
                         col3, col4 = st.columns(2)
-                        tipo_input = col3.selectbox("Tipo de Dato (Input)", ["Texto", "Fecha", "Número", "Opciones"])
+                        tipo_input = col3.selectbox("Tipo de Dato (Input)", ["Texto", "Fecha", "Número", "Opciones", "Selección única", "Selección múltiple", "Casilla"])
                         tipo_pers = col4.selectbox("Aplica para el tipo de persona:", ["Ambas", "Fisica", "Moral"])
                         
                         roles_sel = st.multiselect("Aplica a los Roles:", options=roles_disponibles, help="Si lo dejas vacío, se le pedirá a todos los roles.")
