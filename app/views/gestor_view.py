@@ -113,41 +113,71 @@ def render_gestor(db, user_actual, tab_expedientes):
                             col = cols[i % 2]
                             val_previo = datos_actuales.get(c.llave_jinja, "")
                             with col:
-                                if c.tipo_input == "Texto": nuevos_datos[c.llave_jinja] = st.text_input(c.nombre_mostrar, value=val_previo, disabled=es_solo_lectura)
-                                elif c.tipo_input == "Número":
-                                    try: val_num = float(val_previo) if val_previo else 0.0
-                                    except: val_num = 0.0
+                                tipo = c.tipo_input
+                                if tipo == "Texto":
+                                    nuevos_datos[c.llave_jinja] = st.text_input(c.nombre_mostrar, value=str(val_previo or ""), disabled=es_solo_lectura)
+                                elif tipo == "Número":
+                                    try:
+                                        val_num = float(val_previo) if val_previo not in (None, "") else 0.0
+                                    except (TypeError, ValueError):
+                                        val_num = 0.0
                                     nuevos_datos[c.llave_jinja] = st.number_input(c.nombre_mostrar, value=val_num, disabled=es_solo_lectura)
-                                elif c.tipo_input == "Opciones":
-                                    opciones = c.opciones_json if c.opciones_json else ["Sin opciones"]
-                                    idx = opciones.index(val_previo) if val_previo in opciones else 0
-                                    nuevos_datos[c.llave_jinja] = st.selectbox(c.nombre_mostrar, options=opciones, index=idx, disabled=es_solo_lectura)
-                                elif c.tipo_input == "Fecha":
+                                elif tipo in ("Opciones", "Selección única"):
+                                    opciones = c.opciones_json or []
+                                    if not opciones:
+                                        st.warning(f"'{c.nombre_mostrar}' no tiene opciones configuradas.")
+                                        nuevos_datos[c.llave_jinja] = val_previo
+                                    else:
+                                        idx = opciones.index(val_previo) if val_previo in opciones else 0
+                                        nuevos_datos[c.llave_jinja] = st.selectbox(c.nombre_mostrar, options=opciones, index=idx, disabled=es_solo_lectura)
+                                elif tipo == "Selección múltiple":
+                                    opciones = c.opciones_json or []
+                                    previo = val_previo if isinstance(val_previo, list) else []
+                                    seleccion_previa = [v for v in previo if v in opciones]
+                                    if not opciones:
+                                        st.warning(f"'{c.nombre_mostrar}' no tiene opciones configuradas.")
+                                        nuevos_datos[c.llave_jinja] = previo
+                                    else:
+                                        nuevos_datos[c.llave_jinja] = st.multiselect(c.nombre_mostrar, options=opciones, default=seleccion_previa, disabled=es_solo_lectura)
+                                elif tipo == "Casilla":
+                                    nuevos_datos[c.llave_jinja] = st.checkbox(c.nombre_mostrar, value=bool(val_previo), disabled=es_solo_lectura)
+                                elif tipo == "Fecha":
                                     val_fecha = datetime.date.today()
                                     if val_previo:
-                                        try: val_fecha = datetime.datetime.strptime(val_previo, "%Y-%m-%d").date()
-                                        except: pass
+                                        try:
+                                            val_fecha = datetime.datetime.strptime(str(val_previo), "%Y-%m-%d").date()
+                                        except (TypeError, ValueError):
+                                            pass
                                     nuevos_datos[c.llave_jinja] = st.date_input(c.nombre_mostrar, value=val_fecha, disabled=es_solo_lectura)
-                                    
+                                else:
+                                    st.warning(f"Tipo de campo no compatible: '{tipo}' ({c.nombre_mostrar}).")
+                                    nuevos_datos[c.llave_jinja] = val_previo
+
                         submit_btn = st.form_submit_button("Validar y Guardar Datos", disabled=es_solo_lectura)
-                        
+
                     if submit_btn and not es_solo_lectura:
                         errores = []
                         for c in campos_aplicables:
-                            val = nuevos_datos[c.llave_jinja]
-                            if c.tipo_input == "Fecha":
+                            val = nuevos_datos.get(c.llave_jinja)
+                            if c.tipo_input == "Fecha" and isinstance(val, datetime.date):
                                 if c.regla_validacion == "max_90_dias":
                                     diff = (datetime.date.today() - val).days
-                                    if diff > 90: errores.append(f"❌ '{c.nombre_mostrar}' excede 90 días de antigüedad.")
-                                    elif diff < 0: errores.append(f"❌ '{c.nombre_mostrar}' no puede ser fecha futura.")
+                                    if diff > 90:
+                                        errores.append(f"❌ '{c.nombre_mostrar}' excede 90 días de antigüedad.")
+                                    elif diff < 0:
+                                        errores.append(f"❌ '{c.nombre_mostrar}' no puede ser fecha futura.")
                                 elif c.regla_validacion == "vigente_futuro":
-                                    if val < datetime.date.today(): errores.append(f"❌ '{c.nombre_mostrar}' ya está vencido.")
+                                    if val < datetime.date.today():
+                                        errores.append(f"❌ '{c.nombre_mostrar}' ya está vencido.")
                         if errores:
-                            for e in errores: st.error(e)
+                            for e in errores:
+                                st.error(e)
                         else:
+                            # Convert date values, then merge so fields managed elsewhere are preserved.
+                            datos_guardados = dict(datos_actuales)
                             for k, v in nuevos_datos.items():
-                                if isinstance(v, datetime.date): nuevos_datos[k] = v.strftime("%Y-%m-%d")
-                            part.persona.datos_json = nuevos_datos
+                                datos_guardados[k] = v.strftime("%Y-%m-%d") if isinstance(v, datetime.date) else v
+                            part.persona.datos_json = datos_guardados
                             flag_modified(part.persona, "datos_json")
                             db.commit()
                             st.success("✅ Datos guardados.")
