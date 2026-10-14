@@ -4,24 +4,24 @@ import platform
 import tempfile
 import subprocess
 import openpyxl
+from jinja2 import Environment
 from pypdf import PdfReader, PdfWriter
 from docxtpl import DocxTemplate
 from app.utils.template_filters import mark_filter, prefix_filter
 
 def procesar_excel(file_bytes: bytes, context: dict) -> bytes:
-    """Abre un Excel en memoria, busca las etiquetas {{llave}} y las reemplaza"""
+    """Render Jinja expressions inside Excel string cells and preserve workbook layout."""
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
-    
+    env = Environment()
+    env.filters["mark"] = mark_filter
+    env.filters["prefix"] = prefix_filter
+
     for sheet in wb.worksheets:
         for row in sheet.iter_rows():
             for cell in row:
-                if cell.value and isinstance(cell.value, str):
-                    # Si detecta formato Jinja, intenta reemplazar con el contexto
-                    for key, val in context.items():
-                        tag = f"{{{{{key}}}}}" # Equivale a {{key}}
-                        if tag in cell.value:
-                            cell.value = cell.value.replace(tag, str(val))
-                            
+                if isinstance(cell.value, str) and "{{" in cell.value and "}}" in cell.value:
+                    cell.value = env.from_string(cell.value).render(context)
+
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
