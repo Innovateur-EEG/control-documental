@@ -77,3 +77,30 @@ def test_baseline_schema_contains_dynamic_field_configuration_column():
     finally:
         session.close()
         engine.dispose()
+
+
+def test_migration_adds_missing_column_and_is_idempotent():
+    from sqlalchemy import inspect, text
+    from scripts.migrate_db import migrate_schema
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE TABLE configuracion_campos "
+                    "(id INTEGER PRIMARY KEY, nombre_mostrar VARCHAR NOT NULL)"
+                )
+            )
+
+        assert migrate_schema(engine) is True
+        columns = {column["name"] for column in inspect(engine).get_columns("configuracion_campos")}
+        assert "configuracion_json" in columns
+
+        assert migrate_schema(engine) is False
+    finally:
+        engine.dispose()
