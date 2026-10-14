@@ -146,6 +146,7 @@ class ConfiguracionCampos(Base):
     tipo_persona = Column(String, nullable=False)    
     roles_aplica = Column(JSON, default=list)          
     regla_validacion = Column(String, nullable=True) 
+    configuracion_json = Column(JSON, nullable=False, default=dict)
 
 class ConfiguracionEvidencia(Base):
     __tablename__ = 'configuracion_evidencias'
