@@ -5,6 +5,17 @@ template control-flow blocks. Empty values never select a checkbox.
 """
 import unicodedata
 
+from jinja2 import Undefined
+
+
+def _is_empty(value):
+    """Return whether a value is missing or blank, including Jinja undefineds."""
+    return (
+        value is None
+        or isinstance(value, Undefined)
+        or (isinstance(value, str) and not value.strip())
+    )
+
 
 def _normalize(value):
     """Normalize a value for accent- and case-insensitive comparison."""
@@ -18,12 +29,10 @@ def _normalize(value):
 def mark_filter(actual_value, target_value=None, is_not=False, mark="X", default=""):
     """Return a mark when a value matches a target or its truth value.
 
-    Empty/None strings never produce a mark, including when is_not=True.
-    Collections are supported on either side of the comparison.
+    Missing or blank actual values never produce a mark, including when
+    is_not=True. Collections are supported on either side of the comparison.
     """
-    if actual_value is None:
-        return default
-    if isinstance(actual_value, str) and not actual_value.strip():
+    if _is_empty(actual_value):
         return default
 
     if target_value is None:
@@ -52,7 +61,7 @@ def mark_not_filter(actual_value, target_value=None, is_not=True, mark="X", defa
 
 def prefix_filter(value, prefix=""):
     """Add a prefix only when the value is present and nonblank."""
-    if value is None:
+    if _is_empty(value):
         return ""
     text = str(value).strip()
     return f"{prefix}{text}" if text else ""
