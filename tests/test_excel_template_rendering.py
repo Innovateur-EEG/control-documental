@@ -27,8 +27,8 @@ def test_excel_renders_variables_with_optional_whitespace():
 
 
 def test_excel_renders_registered_jinja_filters():
-    assert _rendered_cell("{{ genero | mark(\"Masculino\") }}", {"genero": "Masculino"}) == "X"
-    assert _rendered_cell("{{ interior | prefix(\", interior: ") }}", {"interior": None}) == ""
+    assert _rendered_cell('{{ genero | mark("Masculino") }}', {"genero": "Masculino"}) == "X"
+    assert _rendered_cell('{{ interior | prefix(", interior: ") }}', {"interior": None}) == ""
 
 
 def test_excel_renders_mark_not_with_is_not_keyword():
