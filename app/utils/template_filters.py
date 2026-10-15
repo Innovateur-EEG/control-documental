@@ -41,6 +41,11 @@ def mark_filter(actual_value, target_value=None, is_not=False, mark="X", default
     return mark if selected else default
 
 
+def mark_not_filter(actual_value, target_value=None, mark="X", default=""):
+    """Return a mark when a non-empty value does not match the target."""
+    return mark_filter(actual_value, target_value, is_not=True, mark=mark, default=default)
+
+
 def prefix_filter(value, prefix=""):
     """Add a prefix only when the value is present and nonblank."""
     if value is None:
