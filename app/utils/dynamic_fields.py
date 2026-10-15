@@ -63,7 +63,7 @@ def number_widget_options(config: dict) -> dict:
             continue
         if isinstance(value, bool) or not isinstance(value, Real):
             raise ValueError(f"'{key}' must be a number.")
-        options[key] = value
+        options[key] = float(value)
 
     if "step" in options and options["step"] <= 0:
         raise ValueError("'step' must be greater than zero.")
