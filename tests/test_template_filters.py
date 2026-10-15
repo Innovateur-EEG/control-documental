@@ -1,6 +1,6 @@
 """Tests for custom Jinja filters used by document templates."""
 
-from app.utils.template_filters import mark_filter, prefix_filter
+from app.utils.template_filters import mark_filter, mark_not_filter, prefix_filter
 
 
 def test_mark_matches_case_and_accents():
@@ -23,6 +23,13 @@ def test_mark_supports_boolean_and_exclusion_checks():
 def test_mark_supports_custom_mark_and_default():
     assert mark_filter("Casa", "Departamento", mark="✓", default="-") == "-"
     assert mark_filter("Casa", "casa", mark="✓", default="-") == "✓"
+
+
+def test_mark_not_accepts_is_not_keyword_and_defaults_to_inverse():
+    assert mark_not_filter("Extranjera", "Mexicana") == "X"
+    assert mark_not_filter("Extranjera", "Mexicana", is_not=True) == "X"
+    assert mark_not_filter("Mexicana", "Mexicana", is_not=True) == ""
+    assert mark_not_filter(None, "Mexicana", is_not=True) == ""
 
 
 def test_prefix_omits_prefix_for_empty_values():
