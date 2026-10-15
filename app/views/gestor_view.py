@@ -8,6 +8,7 @@ from docxtpl import DocxTemplate
 from sqlalchemy.orm.attributes import flag_modified
 from app.models.database import Participacion, JerarquiaParticipacion, DocumentoExpediente, PlantillaFormato, ConfiguracionCampos, ConfiguracionEvidencia, supabase_client
 from app.utils.documentos import procesar_excel, procesar_word, convertir_a_pdf, fusionar_pdfs
+from app.utils.dynamic_fields import checkbox_value, field_config, number_widget_options, text_widget_options
 
 def limpiar_nombre_archivo(nombre: str) -> str:
     import unicodedata, re
@@ -109,8 +110,7 @@ def render_gestor(db, user_actual, tab_expedientes):
                     # Configuration is metadata-driven. Conditional fields need reruns, so widgets
                     # are intentionally outside st.form and use stable keys.
                     def _field_config(field):
-                        raw = getattr(field, "configuracion_json", None) or {}
-                        return raw if isinstance(raw, dict) else {}
+                        return field_config(getattr(field, "configuracion_json", None))
 
                     def _field_order(field):
                         try:
@@ -177,13 +177,41 @@ def render_gestor(db, user_actual, tab_expedientes):
                                 opciones = mapa.get(str(valor_dep), []) if isinstance(mapa, dict) else []
 
                             if tipo == "Texto":
-                                nuevos_datos[c.llave_jinja] = st.text_input(c.nombre_mostrar, value=str(val_previo or ""), help=ayuda, disabled=es_solo_lectura, key=widget_key)
+                                try:
+                                    text_options = text_widget_options(config)
+                                except ValueError as exc:
+                                    st.warning(f"Configuración inválida para '{c.nombre_mostrar}': {exc}")
+                                    text_options = {}
+                                nuevos_datos[c.llave_jinja] = st.text_input(
+                                    c.nombre_mostrar,
+                                    value=str(val_previo or ""),
+                                    help=ayuda,
+                                    disabled=es_solo_lectura,
+                                    key=widget_key,
+                                    **text_options,
+                                )
                             elif tipo == "Número":
                                 try:
                                     val_num = float(val_previo) if val_previo not in (None, "") else 0.0
                                 except (TypeError, ValueError):
                                     val_num = 0.0
-                                nuevos_datos[c.llave_jinja] = st.number_input(c.nombre_mostrar, value=val_num, help=ayuda, disabled=es_solo_lectura, key=widget_key)
+                                try:
+                                    number_options = number_widget_options(config)
+                                except ValueError as exc:
+                                    st.warning(f"Configuración inválida para '{c.nombre_mostrar}': {exc}")
+                                    number_options = {}
+                                if "min_value" in number_options:
+                                    val_num = max(val_num, number_options["min_value"])
+                                if "max_value" in number_options:
+                                    val_num = min(val_num, number_options["max_value"])
+                                nuevos_datos[c.llave_jinja] = st.number_input(
+                                    c.nombre_mostrar,
+                                    value=val_num,
+                                    help=ayuda,
+                                    disabled=es_solo_lectura,
+                                    key=widget_key,
+                                    **number_options,
+                                )
                             elif tipo in ("Opciones", "Selección única"):
                                 if not opciones:
                                     st.warning(f"'{c.nombre_mostrar}' no tiene opciones disponibles para la selección actual.")
@@ -204,7 +232,15 @@ def render_gestor(db, user_actual, tab_expedientes):
                                         del st.session_state[widget_key]
                                     nuevos_datos[c.llave_jinja] = st.multiselect(c.nombre_mostrar, options=opciones, default=seleccion_previa, help=ayuda, disabled=es_solo_lectura, key=widget_key)
                             elif tipo == "Casilla":
-                                nuevos_datos[c.llave_jinja] = st.checkbox(c.nombre_mostrar, value=bool(val_previo), help=ayuda, disabled=es_solo_lectura, key=widget_key)
+                                if widget_key in st.session_state and not isinstance(st.session_state[widget_key], bool):
+                                    st.session_state[widget_key] = checkbox_value(st.session_state[widget_key])
+                                nuevos_datos[c.llave_jinja] = st.checkbox(
+                                    c.nombre_mostrar,
+                                    value=checkbox_value(val_previo),
+                                    help=ayuda,
+                                    disabled=es_solo_lectura,
+                                    key=widget_key,
+                                )
                             elif tipo == "Fecha":
                                 val_fecha = datetime.date.today()
                                 if val_previo:
