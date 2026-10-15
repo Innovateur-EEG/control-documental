@@ -62,7 +62,7 @@ def test_text_widget_options_reject_invalid_max_chars(value):
 
 def test_number_widget_options_accepts_bounds_and_step():
     assert number_widget_options(
-        {"min_value": 0, "max_value": 100, "step": 0.5}
+        {"min_value": 0.0, "max_value": 100.0, "step": 0.5}
     ) == {"min_value": 0, "max_value": 100, "step": 0.5}
 
 
