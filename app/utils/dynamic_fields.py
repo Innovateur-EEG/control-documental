@@ -74,3 +74,14 @@ def number_widget_options(config: dict) -> dict:
     ):
         raise ValueError("'min_value' cannot exceed 'max_value'.")
     return options
+
+
+
+def validate_field_config(field_type: str, config: dict) -> None:
+    """Validate the type-specific widget options before an administrator saves them."""
+    if field_type not in SUPPORTED_FIELD_TYPES:
+        raise ValueError(f"Unsupported field type: {field_type!r}.")
+    if field_type == "Texto":
+        text_widget_options(config)
+    elif field_type == "Número":
+        number_widget_options(config)
