@@ -30,6 +30,11 @@ def test_excel_renders_registered_jinja_filters():
     assert _rendered_cell("{{ interior | prefix(\", interior: \") }}", {"interior": None}) == ""
 
 
+def test_excel_renders_mark_not_with_is_not_keyword():
+    assert _rendered_cell('{{ nacionalidad | mark_not("Mexicana", is_not=True) }}', {"nacionalidad": "Extranjera"}) == "X"
+    assert _rendered_cell('{{ nacionalidad | mark("Mexicana", is_not=True) }}', {"nacionalidad": "Mexicana"}) == ""
+
+
 def test_excel_keeps_plain_text_and_formula_cells_unchanged():
     workbook = openpyxl.Workbook()
     workbook.active["A1"] = "Texto fijo"
