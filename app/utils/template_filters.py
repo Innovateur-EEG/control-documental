@@ -41,9 +41,13 @@ def mark_filter(actual_value, target_value=None, is_not=False, mark="X", default
     return mark if selected else default
 
 
-def mark_not_filter(actual_value, target_value=None, mark="X", default=""):
-    """Return a mark when a non-empty value does not match the target."""
-    return mark_filter(actual_value, target_value, is_not=True, mark=mark, default=default)
+def mark_not_filter(actual_value, target_value=None, is_not=True, mark="X", default=""):
+    """Compatibility alias for mark_filter with inverse matching enabled by default.
+
+    Accepts is_not explicitly so existing templates using mark_not(..., is_not=True)
+    continue to work. Prefer mark(..., is_not=True) for new templates.
+    """
+    return mark_filter(actual_value, target_value, is_not=is_not, mark=mark, default=default)
 
 
 def prefix_filter(value, prefix=""):
