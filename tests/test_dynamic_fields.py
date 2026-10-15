@@ -8,6 +8,7 @@ from app.utils.dynamic_fields import (
     field_config,
     number_widget_options,
     text_widget_options,
+    validate_field_config,
 )
 
 
@@ -79,3 +80,22 @@ def test_number_widget_options_accepts_bounds_and_step():
 def test_number_widget_options_rejects_invalid_constraints(config):
     with pytest.raises(ValueError):
         number_widget_options(config)
+
+
+
+@pytest.mark.parametrize(
+    ("field_type", "config"),
+    [
+        ("Texto", {"max_chars": 120, "placeholder": "Name"}),
+        ("Número", {"min_value": 0, "max_value": 10, "step": 1}),
+        ("Casilla", {"default": False}),
+        ("Selección única", {"options_map": {"depends_on": "tipo", "map": {}}}),
+    ],
+)
+def test_validate_field_config_accepts_supported_type_settings(field_type, config):
+    assert validate_field_config(field_type, config) is None
+
+
+def test_validate_field_config_rejects_unknown_type():
+    with pytest.raises(ValueError, match="Unsupported field type"):
+        validate_field_config("Color picker", {})
