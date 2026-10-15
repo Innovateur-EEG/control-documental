@@ -7,13 +7,14 @@ import openpyxl
 from jinja2 import Environment
 from pypdf import PdfReader, PdfWriter
 from docxtpl import DocxTemplate
-from app.utils.template_filters import mark_filter, prefix_filter
+from app.utils.template_filters import mark_filter, mark_not_filter, prefix_filter
 
 def procesar_excel(file_bytes: bytes, context: dict) -> bytes:
     """Render Jinja expressions inside Excel string cells and preserve workbook layout."""
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
     env = Environment()
     env.filters["mark"] = mark_filter
+    env.filters["mark_not"] = mark_not_filter
     env.filters["prefix"] = prefix_filter
 
     for sheet in wb.worksheets:
@@ -30,6 +31,7 @@ def procesar_word(file_bytes: bytes, context: dict) -> bytes:
     """Renderiza la plantilla Word usando Jinja2"""
     doc = DocxTemplate(io.BytesIO(file_bytes))
     doc.jinja_env.filters["mark"] = mark_filter
+    doc.jinja_env.filters["mark_not"] = mark_not_filter
     doc.jinja_env.filters["prefix"] = prefix_filter
     doc.render(context)
     out = io.BytesIO()
