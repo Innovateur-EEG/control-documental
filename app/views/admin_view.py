@@ -7,6 +7,7 @@ import unicodedata
 import uuid
 from app.models.database import Usuario, Proyecto, Persona, Catalogo, Participacion, JerarquiaParticipacion, DocumentoExpediente, PlantillaFormato, ConfiguracionCampos, ConfiguracionEvidencia, UsuarioPersonaGestor, supabase_client
 from app.utils.auth import generar_hash
+from app.utils.dynamic_fields import SUPPORTED_FIELD_TYPES, validate_field_config
 from sqlalchemy.orm.attributes import flag_modified
 
 
@@ -795,10 +796,7 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                     .filter_by(categoria="Rol_Participacion").all()
                 ]
                 tipos_persona = ["Ambas", "Fisica", "Moral"]
-                tipos_campo = [
-                    "Texto", "Fecha", "Número", "Opciones",
-                    "Selección única", "Selección múltiple", "Casilla"
-                ]
+                tipos_campo = list(SUPPORTED_FIELD_TYPES)
                 reglas_validacion = ["ninguna", "max_90_dias", "vigente_futuro"]
 
                 # --- Campos / variables ---
@@ -889,6 +887,12 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                                 raise ValueError(f"Fila {numero_fila}: Configuración JSON inválida ({exc.msg}).")
                             if not isinstance(config_json, dict):
                                 raise ValueError(f"Fila {numero_fila}: Configuración JSON debe ser un objeto.")
+                            try:
+                                validate_field_config(tipo, config_json)
+                            except ValueError as exc:
+                                raise ValueError(
+                                    f"Fila {numero_fila}: Configuración de campo inválida ({exc})."
+                                ) from exc
                             if id_registro is not None and id_registro not in existentes:
                                 raise ValueError(f"Fila {numero_fila}: ID de registro desconocido.")
                             if id_registro is not None:
