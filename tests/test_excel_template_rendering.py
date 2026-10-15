@@ -18,7 +18,8 @@ def _workbook_bytes(value):
 def _rendered_cell(value, context):
     result = procesar_excel(_workbook_bytes(value), context)
     workbook = openpyxl.load_workbook(io.BytesIO(result), data_only=False)
-    return workbook.active["A1"].value
+    # Excel/openpyxl reads a serialized empty cell back as None.
+    return workbook.active["A1"].value or ""
 
 
 def test_excel_renders_variables_with_optional_whitespace():
@@ -27,12 +28,17 @@ def test_excel_renders_variables_with_optional_whitespace():
 
 def test_excel_renders_registered_jinja_filters():
     assert _rendered_cell("{{ genero | mark(\"Masculino\") }}", {"genero": "Masculino"}) == "X"
-    assert _rendered_cell("{{ interior | prefix(\", interior: \") }}", {"interior": None}) == ""
+    assert _rendered_cell("{{ interior | prefix(\", interior: ") }}", {"interior": None}) == ""
 
 
 def test_excel_renders_mark_not_with_is_not_keyword():
     assert _rendered_cell('{{ nacionalidad | mark_not("Mexicana", is_not=True) }}', {"nacionalidad": "Extranjera"}) == "X"
     assert _rendered_cell('{{ nacionalidad | mark("Mexicana", is_not=True) }}', {"nacionalidad": "Mexicana"}) == ""
+
+
+def test_excel_missing_variables_never_trigger_inverse_marks():
+    assert _rendered_cell("{{ obligacion_fiscal_extranjero | mark(is_not=True) }}", {}) == ""
+    assert _rendered_cell('{{ nacionalidad | mark_not("Mexicana", is_not=True) }}', {}) == ""
 
 
 def test_excel_keeps_plain_text_and_formula_cells_unchanged():
