@@ -8,7 +8,7 @@ from docxtpl import DocxTemplate
 from sqlalchemy.orm.attributes import flag_modified
 from app.models.database import Participacion, JerarquiaParticipacion, DocumentoExpediente, PlantillaFormato, ConfiguracionCampos, ConfiguracionEvidencia, supabase_client
 from app.utils.documentos import procesar_excel, procesar_word, convertir_a_pdf, fusionar_pdfs
-from app.utils.dynamic_fields import checkbox_value, field_config, number_widget_options, text_widget_options
+from app.utils.dynamic_fields import checkbox_value, dependent_options, field_config, field_is_visible, number_widget_options, text_widget_options
 
 def limpiar_nombre_archivo(nombre: str) -> str:
     import unicodedata, re
@@ -141,19 +141,19 @@ def render_gestor(db, user_actual, tab_expedientes):
                             columnas = st.columns(2)
                             indice_columna = 0
 
-                        condicion = config.get("visible_if")
-                        if isinstance(condicion, dict) and condicion.get("field"):
-                            clave_condicion = str(condicion["field"])
-                            campo_cond = campo_por_llave.get(clave_condicion)
-                            clave_widget_cond = f"field_{part.id}_{campo_cond.id}" if campo_cond else None
-                            valor_condicion = st.session_state.get(
-                                clave_widget_cond,
-                                nuevos_datos.get(clave_condicion, datos_actuales.get(clave_condicion))
-                            )
-                            esperado = condicion.get("equals")
-                            visible = esperado in valor_condicion if isinstance(valor_condicion, list) else valor_condicion == esperado
-                            if not visible:
-                                continue
+                        valores_para_reglas = dict(datos_actuales)
+                        valores_para_reglas.update(nuevos_datos)
+                        for llave_regla, campo_regla in campo_por_llave.items():
+                            clave_regla = f"field_{part.id}_{campo_regla.id}"
+                            if clave_regla in st.session_state:
+                                valores_para_reglas[llave_regla] = st.session_state[clave_regla]
+                        try:
+                            visible = field_is_visible(config, valores_para_reglas)
+                        except ValueError as exc:
+                            st.warning(f"Configuración condicional inválida para '{c.nombre_mostrar}': {exc}")
+                            visible = True
+                        if not visible:
+                            continue
 
                         col = columnas[indice_columna % 2]
                         indice_columna += 1
@@ -164,17 +164,17 @@ def render_gestor(db, user_actual, tab_expedientes):
                         with col:
                             tipo = c.tipo_input
                             opciones = c.opciones_json or []
-                            mapa_opciones = config.get("options_map")
-                            if isinstance(mapa_opciones, dict) and mapa_opciones.get("depends_on"):
-                                clave_dep = str(mapa_opciones["depends_on"])
-                                campo_dep = campo_por_llave.get(clave_dep)
-                                clave_widget_dep = f"field_{part.id}_{campo_dep.id}" if campo_dep else None
-                                valor_dep = st.session_state.get(
-                                    clave_widget_dep,
-                                    nuevos_datos.get(clave_dep, datos_actuales.get(clave_dep))
-                                )
-                                mapa = mapa_opciones.get("map") or {}
-                                opciones = mapa.get(str(valor_dep), []) if isinstance(mapa, dict) else []
+                            valores_para_reglas = dict(datos_actuales)
+                            valores_para_reglas.update(nuevos_datos)
+                            for llave_regla, campo_regla in campo_por_llave.items():
+                                clave_regla = f"field_{part.id}_{campo_regla.id}"
+                                if clave_regla in st.session_state:
+                                    valores_para_reglas[llave_regla] = st.session_state[clave_regla]
+                            try:
+                                opciones = dependent_options(config, valores_para_reglas, opciones)
+                            except ValueError as exc:
+                                st.warning(f"Configuración de opciones inválida para '{c.nombre_mostrar}': {exc}")
+                                opciones = []
 
                             if tipo == "Texto":
                                 try:
