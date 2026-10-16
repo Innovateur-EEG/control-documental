@@ -314,8 +314,33 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                         col_ev1, col_ev2 = st.columns([1, 1])
                         with col_ev1:
                             st.markdown(f"**{ev.nombre_evidencia}**")
-                            if doc_ev and doc_ev.estatus == "Cargado": st.success(f"✅ Archivo en la nube ({doc_ev.fecha_actualizacion.strftime('%Y-%m-%d')})")
-                            else: st.warning("⚠️ Pendiente de carga")
+                            if doc_ev and doc_ev.estatus == "Cargado":
+                                fecha_carga = (
+                                    doc_ev.fecha_actualizacion.strftime("%Y-%m-%d")
+                                    if doc_ev.fecha_actualizacion else "Fecha no disponible"
+                                )
+                                st.success(f"Archivo en la nube ({fecha_carga})")
+                                if doc_ev.ruta_archivo:
+                                    if st.button("Preparar descarga", key=f"prep_ev_dl_{part.id}_{ev.id}"):
+                                        try:
+                                            if supabase_client is None:
+                                                raise RuntimeError("Supabase Storage no está configurado.")
+                                            st.session_state[f"evidencia_bytes_{part.id}_{ev.id}"] = (
+                                                supabase_client.storage.from_("expedientes").download(doc_ev.ruta_archivo)
+                                            )
+                                        except Exception as exc:
+                                            st.error(f"No se pudo recuperar la evidencia: {exc}")
+                                    evidencia_bytes = st.session_state.get(f"evidencia_bytes_{part.id}_{ev.id}")
+                                    if evidencia_bytes is not None:
+                                        st.download_button(
+                                            "Descargar evidencia",
+                                            data=evidencia_bytes,
+                                            file_name=os.path.basename(doc_ev.ruta_archivo),
+                                            mime="application/octet-stream",
+                                            key=f"dl_ev_{part.id}_{ev.id}",
+                                        )
+                            else:
+                                st.warning("Pendiente de carga")
                         with col_ev2:
                             if not doc_ev or doc_ev.estatus != "Cargado":
                                 archivo_ev = st.file_uploader("Subir Archivo (.pdf, .jpg, .png)", type=["pdf", "jpg", "jpeg", "png"], key=f"up_ev_{part.id}_{ev.id}", label_visibility="collapsed", disabled=es_solo_lectura)
@@ -523,14 +548,49 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                     st.divider()
                     st.markdown("### 📦 Trazabilidad del Documento Original")
                     meta = doc_exp.metadata_json or {}
+                    ruta_firmado = meta.get("ruta_paquete_firmado")
+                    if ruta_firmado:
+                        if st.button("Preparar descarga del paquete firmado", key=f"prep_signed_dl_{part.id}"):
+                            try:
+                                if supabase_client is None:
+                                    raise RuntimeError("Supabase Storage no está configurado.")
+                                st.session_state[f"pdf_firmado_bytes_{part.id}"] = (
+                                    supabase_client.storage.from_("expedientes").download(ruta_firmado)
+                                )
+                            except Exception as exc:
+                                st.error(f"No se pudo recuperar el paquete firmado: {exc}")
+                        pdf_firmado_bytes = st.session_state.get(f"pdf_firmado_bytes_{part.id}")
+                        if pdf_firmado_bytes is not None:
+                            st.download_button(
+                                "Descargar paquete firmado",
+                                data=pdf_firmado_bytes,
+                                file_name=f"Paquete_firmado_{limpiar_nombre_archivo(part.persona.razon_social_nombre)}.pdf",
+                                mime="application/pdf",
+                                key=f"dl_signed_{part.id}",
+                            )
                     
                     if doc_exp.estatus in ["Enviado Físicamente", "Recibido", "Validado Original"]:
                         st.success(f"✅ Estatus físico actual: **{doc_exp.estatus}**")
                         st.write(f"**Método:** {meta.get('metodo', 'N/A')} | **Fecha de envío/entrega:** {meta.get('fecha_envio', 'N/A')}")
                         if meta.get('metodo') == "Enviado por paquetería":
                             st.write(f"**Paquetería:** {meta.get('empresa', 'N/A')} | **Guía:** {meta.get('guia', 'N/A')}")
-                        st.warning("⚠️ Si cometió un error o la documentación fue rechazada, puede reiniciar el flujo.")
-                        if st.button("🔄 Reiniciar Flujo", key=f"btn_restart_{part.id}", disabled=es_solo_lectura):
+                        if doc_exp.estatus == "Enviado Físicamente":
+                            col_recibido, col_validado = st.columns(2)
+                            if col_recibido.button("Registrar recepción", key=f"btn_received_{part.id}", disabled=es_solo_lectura):
+                                doc_exp.estatus = "Recibido"
+                                db.commit()
+                                st.rerun()
+                            if col_validado.button("Validar original recibido", key=f"btn_validated_{part.id}", disabled=es_solo_lectura):
+                                doc_exp.estatus = "Validado Original"
+                                db.commit()
+                                st.rerun()
+                        elif doc_exp.estatus == "Recibido":
+                            if st.button("Validar documento original", key=f"btn_validate_original_{part.id}", disabled=es_solo_lectura):
+                                doc_exp.estatus = "Validado Original"
+                                db.commit()
+                                st.rerun()
+                        st.warning("Si cometió un error o la documentación fue rechazada, puede reiniciar el flujo.")
+                        if st.button("Reiniciar Flujo", key=f"btn_restart_{part.id}", disabled=es_solo_lectura):
                             doc_exp.estatus = "Actualizado"
                             meta.pop("metodo", None); meta.pop("fecha_envio", None); meta.pop("empresa", None); meta.pop("guia", None)
                             doc_exp.metadata_json = meta
