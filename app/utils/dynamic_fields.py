@@ -77,6 +77,32 @@ def number_widget_options(config: dict) -> dict:
 
 
 
+def field_is_visible(config: dict, values: dict) -> bool:
+    """Evaluate a field's optional equality-based visibility rule."""
+    condition = config.get("visible_if")
+    if condition is None:
+        return True
+    if not isinstance(condition, dict) or not condition.get("field") or "equals" not in condition:
+        raise ValueError("'visible_if' must contain 'field' and 'equals'.")
+    actual = values.get(str(condition["field"]))
+    expected = condition["equals"]
+    return expected in actual if isinstance(actual, list) else actual == expected
+
+
+def dependent_options(config: dict, values: dict, fallback: list | None = None) -> list:
+    """Resolve options from an optional dependency map; otherwise use base options."""
+    mapping = config.get("options_map")
+    if mapping is None:
+        return list(fallback or [])
+    if not isinstance(mapping, dict) or not mapping.get("depends_on") or not isinstance(mapping.get("map"), dict):
+        raise ValueError("'options_map' must contain 'depends_on' and an options 'map'.")
+    selected = values.get(str(mapping["depends_on"]))
+    options = mapping["map"].get(str(selected), [])
+    if not isinstance(options, list) or any(not isinstance(option, (str, int, float)) for option in options):
+        raise ValueError("Each dependent option list must contain scalar values.")
+    return options
+
+
 def validate_field_config(field_type: str, config: dict) -> None:
     """Validate the type-specific widget options before an administrator saves them."""
     if field_type not in SUPPORTED_FIELD_TYPES:
@@ -85,3 +111,16 @@ def validate_field_config(field_type: str, config: dict) -> None:
         text_widget_options(config)
     elif field_type == "Número":
         number_widget_options(config)
+    if "visible_if" in config:
+        condition = config["visible_if"]
+        if not isinstance(condition, dict) or not condition.get("field") or "equals" not in condition:
+            raise ValueError("'visible_if' must contain 'field' and 'equals'.")
+    if "options_map" in config:
+        mapping = config["options_map"]
+        if field_type not in ("Opciones", "Selección única", "Selección múltiple"):
+            raise ValueError("'options_map' is only supported for selection fields.")
+        if not isinstance(mapping, dict) or not mapping.get("depends_on") or not isinstance(mapping.get("map"), dict):
+            raise ValueError("'options_map' must contain 'depends_on' and an options 'map'.")
+        for options in mapping["map"].values():
+            if not isinstance(options, list) or any(not isinstance(option, (str, int, float)) for option in options):
+                raise ValueError("Each dependent option list must contain scalar values.")
