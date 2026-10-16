@@ -575,13 +575,8 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                         if meta.get('metodo') == "Enviado por paquetería":
                             st.write(f"**Paquetería:** {meta.get('empresa', 'N/A')} | **Guía:** {meta.get('guia', 'N/A')}")
                         if doc_exp.estatus == "Enviado Físicamente":
-                            col_recibido, col_validado = st.columns(2)
-                            if col_recibido.button("Registrar recepción", key=f"btn_received_{part.id}", disabled=es_solo_lectura):
+                            if st.button("Registrar recepción", key=f"btn_received_{part.id}", disabled=es_solo_lectura):
                                 doc_exp.estatus = "Recibido"
-                                db.commit()
-                                st.rerun()
-                            if col_validado.button("Validar original recibido", key=f"btn_validated_{part.id}", disabled=es_solo_lectura):
-                                doc_exp.estatus = "Validado Original"
                                 db.commit()
                                 st.rerun()
                         elif doc_exp.estatus == "Recibido":
