@@ -9,6 +9,8 @@ from app.utils.dynamic_fields import (
     field_is_visible,
     field_config,
     number_widget_options,
+    merge_capture_values,
+    validate_submitted_value,
     text_widget_options,
     validate_field_config,
 )
@@ -133,3 +135,23 @@ def test_dependent_options_resolve_selected_parent_and_fallback():
 def test_dependent_options_reject_malformed_configuration():
     with pytest.raises(ValueError, match="options_map"):
         dependent_options({"options_map": {"depends_on": "tipo"}}, {})
+
+
+@pytest.mark.parametrize(
+    ("value", "values", "expected"),
+    [
+        ("CURP", {"tipo": "Fisica"}, True),
+        ("Acta", {"tipo": "Fisica"}, False),
+        (["CURP", "Acta"], {"tipo": "Fisica"}, False),
+    ],
+)
+def test_validate_submitted_value_checks_current_dependent_options(value, values, expected):
+    config = {"options_map": {"depends_on": "tipo", "map": {"Fisica": ["CURP"], "Moral": ["Acta"]}}}
+    assert validate_submitted_value(config, value, values) is expected
+
+
+def test_merge_capture_values_preserves_hidden_and_unrelated_fields():
+    existing = {"visible": "old", "hidden": "keep", "unrelated": 10}
+    assert merge_capture_values(existing, {"visible": "new"}) == {
+        "visible": "new", "hidden": "keep", "unrelated": 10
+    }
