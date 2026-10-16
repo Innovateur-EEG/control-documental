@@ -103,6 +103,24 @@ def dependent_options(config: dict, values: dict, fallback: list | None = None) 
     return options
 
 
+def validate_submitted_value(config: dict, value: Any, values: dict, base_options: list | None = None) -> bool:
+    """Return whether a submitted selection belongs to its currently allowed options."""
+    mapping = config.get("options_map")
+    if mapping is None:
+        return True
+    options = dependent_options(config, values, base_options)
+    if isinstance(value, list):
+        return all(item in options for item in value)
+    return value in options
+
+
+def merge_capture_values(existing: dict, submitted: dict) -> dict:
+    """Merge visible submitted fields while retaining unrelated/hidden saved values."""
+    merged = dict(existing or {})
+    merged.update(submitted or {})
+    return merged
+
+
 def validate_field_config(field_type: str, config: dict) -> None:
     """Validate the type-specific widget options before an administrator saves them."""
     if field_type not in SUPPORTED_FIELD_TYPES:
