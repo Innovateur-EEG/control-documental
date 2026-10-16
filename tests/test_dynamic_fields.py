@@ -5,6 +5,8 @@ import pytest
 from app.utils.dynamic_fields import (
     SUPPORTED_FIELD_TYPES,
     checkbox_value,
+    dependent_options,
+    field_is_visible,
     field_config,
     number_widget_options,
     text_widget_options,
@@ -99,3 +101,35 @@ def test_validate_field_config_accepts_supported_type_settings(field_type, confi
 def test_validate_field_config_rejects_unknown_type():
     with pytest.raises(ValueError, match="Unsupported field type"):
         validate_field_config("Color picker", {})
+
+
+@pytest.mark.parametrize(
+    ("config", "values", "expected"),
+    [
+        ({}, {}, True),
+        ({"visible_if": {"field": "tipo", "equals": "Moral"}}, {"tipo": "Moral"}, True),
+        ({"visible_if": {"field": "tipo", "equals": "Moral"}}, {"tipo": "Fisica"}, False),
+        ({"visible_if": {"field": "roles", "equals": "Admin"}}, {"roles": ["User", "Admin"]}, True),
+        ({"visible_if": {"field": "tipo", "equals": "Moral"}}, {}, False),
+    ],
+)
+def test_field_is_visible_evaluates_configured_condition(config, values, expected):
+    assert field_is_visible(config, values) is expected
+
+
+def test_field_is_visible_rejects_malformed_condition():
+    with pytest.raises(ValueError, match="visible_if"):
+        field_is_visible({"visible_if": {"field": "tipo"}}, {"tipo": "Moral"})
+
+
+def test_dependent_options_resolve_selected_parent_and_fallback():
+    config = {"options_map": {"depends_on": "tipo", "map": {"Moral": ["RFC", "Acta"], "Fisica": ["CURP"]}}}
+    assert dependent_options(config, {"tipo": "Moral"}, ["default"]) == ["RFC", "Acta"]
+    assert dependent_options(config, {"tipo": "Fisica"}) == ["CURP"]
+    assert dependent_options(config, {"tipo": "Otro"}) == []
+    assert dependent_options({}, {}, ["A"]) == ["A"]
+
+
+def test_dependent_options_reject_malformed_configuration():
+    with pytest.raises(ValueError, match="options_map"):
+        dependent_options({"options_map": {"depends_on": "tipo"}}, {})
