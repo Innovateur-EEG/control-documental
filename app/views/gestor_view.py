@@ -6,7 +6,8 @@ import streamlit as st
 import pandas as pd
 from docxtpl import DocxTemplate
 from sqlalchemy.orm.attributes import flag_modified
-from app.models.database import Participacion, JerarquiaParticipacion, DocumentoExpediente, PlantillaFormato, ConfiguracionCampos, ConfiguracionEvidencia, supabase_client
+from app.models.database import Participacion, JerarquiaParticipacion, DocumentoExpediente, PlantillaFormato, ConfiguracionCampos, ConfiguracionEvidencia, UsuarioPersonaGestor, supabase_client
+from app.utils.gestor import EDIT_PERMISSION, READ_ONLY_PERMISSION, descendant_participation_ids, effective_permission
 from app.utils.documentos import procesar_excel, procesar_word, convertir_a_pdf, fusionar_pdfs
 from app.utils.dynamic_fields import checkbox_value, dependent_options, field_config, field_is_visible, merge_capture_values, number_widget_options, text_widget_options, validate_submitted_value
 
@@ -19,7 +20,7 @@ def limpiar_nombre_archivo(nombre: str) -> str:
     nombre = re.sub(r'_+', '_', nombre)
     return nombre.strip('_')
 
-def render_gestor(db, user_actual, tab_expedientes):
+def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
     with tab_expedientes:
         st.subheader("Expedientes Asignados")
         
@@ -27,31 +28,25 @@ def render_gestor(db, user_actual, tab_expedientes):
         personas_directas = [asig.persona for asig in user_actual.personas_asignadas] if user_actual else []
         personas_ids = [p.id for p in personas_directas]
         
-        part_directas = db.query(Participacion).filter(Participacion.persona_id.in_(personas_ids)).all() if personas_ids else []
+        part_directas = []
+        if personas_ids and allowed_project_ids != []:
+            query_directas = db.query(Participacion).filter(Participacion.persona_id.in_(personas_ids))
+            if allowed_project_ids is not None:
+                query_directas = query_directas.filter(Participacion.proyecto_id.in_(allowed_project_ids))
+            part_directas = query_directas.all()
         part_directas_ids = [p.id for p in part_directas]
-        
-        # Buscar descendientes recursivamente
+
+        # Build the hierarchy from participation IDs. The helper guards against cycles.
         jerarquias = db.query(JerarquiaParticipacion).all()
-        hijos_rel_map = {}
-        for j in jerarquias:
-            hijos_rel_map.setdefault(j.padre_id, []).append(j.hijo_id)
-            
-        def obtener_desc(p_ids, visitados=None):
-            if visitados is None: visitados = set()
-            desc = set()
-            for pid in p_ids:
-                if pid in visitados: continue
-                visitados.add(pid)
-                for hid in hijos_rel_map.get(pid, []):
-                    desc.add(hid)
-                    desc.update(obtener_desc([hid], visitados))
-            return desc
-            
-        hijas_ids = obtener_desc(part_directas_ids)
-        part_hijas = db.query(Participacion).filter(Participacion.id.in_(hijas_ids)).all() if hijas_ids else []
-        
-        # UNIMOS AMBOS PARA LA VISTA DEL GESTOR
-        todas_parts = {p.id: p for p in (part_directas + part_hijas)}.values()
+        hierarchy_edges = [(rel.padre_id, rel.hijo_id) for rel in jerarquias]
+        hijas_ids = descendant_participation_ids(part_directas_ids, hierarchy_edges)
+        part_hijas_query = db.query(Participacion).filter(Participacion.id.in_(hijas_ids)) if hijas_ids else None
+        if part_hijas_query is not None and allowed_project_ids is not None:
+            part_hijas_query = part_hijas_query.filter(Participacion.proyecto_id.in_(allowed_project_ids))
+        part_hijas = part_hijas_query.all() if part_hijas_query is not None else []
+
+        # Combine direct assignments and descendants without duplicates.
+        todas_parts = list({p.id: p for p in (part_directas + part_hijas)}.values())
         
         proy_map = {}
         for part_item in todas_parts:
@@ -66,21 +61,23 @@ def render_gestor(db, user_actual, tab_expedientes):
             part_sel_id = col_sel2.selectbox("👤 Persona / Entidad:", options=[p.id for p in participantes_disp], format_func=lambda pid: next(f"{p.persona.razon_social_nombre} ({p.persona.tipo}) - Rol: {p.rol}" for p in participantes_disp if p.id == pid))
             part = next(p for p in participantes_disp if p.id == part_sel_id)
             
-            # --- PERMISOS ATÓMICOS DESDE BD RELACIONAL ---
-            if part.persona_id in personas_ids:
-                # Permiso directo asignado
-                asignacion = next((a for a in user_actual.personas_asignadas if a.persona_id == part.persona_id), None)
-                permiso_actual = asignacion.nivel_permiso if asignacion else "Solo Lectura"
-            else:
-                # Heredado del padre
-                padre_rel = db.query(JerarquiaParticipacion).filter(JerarquiaParticipacion.hijo_id == part.id).first()
-                if padre_rel:
-                    asignacion_padre = db.query(UsuarioPersonaGestor).filter_by(usuario_id=user_actual.id, persona_id=padre_rel.padre.persona_id).first()
-                    permiso_actual = asignacion_padre.nivel_permiso if asignacion_padre else "Solo Lectura"
-                else:
-                    permiso_actual = "Solo Lectura" # Fail-secure: Por defecto bloqueado
-                    
-            es_solo_lectura = (permiso_actual == "Solo Lectura")
+            # Resolve direct and inherited permissions. Unknown values fail closed.
+            direct_permissions = {
+                assignment.persona_id: assignment.nivel_permiso
+                for assignment in (user_actual.personas_asignadas if user_actual else [])
+            }
+            parents_by_child = {}
+            for parent_id, child_id in hierarchy_edges:
+                parents_by_child.setdefault(child_id, []).append(parent_id)
+            participation_persona_ids = {item.id: item.persona_id for item in todas_parts}
+            permiso_actual = effective_permission(
+                part.id,
+                part.persona_id,
+                direct_permissions,
+                parents_by_child,
+                participation_persona_ids,
+            )
+            es_solo_lectura = permiso_actual != EDIT_PERMISSION
                 
             st.divider()
             c_head1, c_head2 = st.columns([3, 1])
@@ -331,13 +328,30 @@ def render_gestor(db, user_actual, tab_expedientes):
                                         ext = os.path.splitext(archivo_ev.name)[1].lower()
                                         ruta_ev = f"evidencias/{proy_limpio}-{pers_limpio}-{nombre_limpio}-{ts}{ext}"
                                         try:
-                                            supabase_client.storage.from_("expedientes").upload(file=archivo_ev.getvalue(), path=ruta_ev, file_options={"content-type": archivo_ev.type, "x-upsert": "true"})
-                                            if not doc_ev: db.add(DocumentoExpediente(participacion_id=part.id, categoria_documento="Evidencia_Adjunta", tipo_documento=ev.nombre_evidencia, estatus="Cargado", ruta_archivo=ruta_ev))
-                                            else: doc_ev.estatus = "Cargado"; doc_ev.ruta_archivo = ruta_ev
+                                            if supabase_client is None:
+                                                raise RuntimeError("Supabase Storage no está configurado.")
+                                            supabase_client.storage.from_("expedientes").upload(
+                                                file=archivo_ev.getvalue(),
+                                                path=ruta_ev,
+                                                file_options={"content-type": archivo_ev.type, "x-upsert": "true"},
+                                            )
+                                            if not doc_ev:
+                                                db.add(DocumentoExpediente(
+                                                    participacion_id=part.id,
+                                                    categoria_documento="Evidencia_Adjunta",
+                                                    tipo_documento=ev.nombre_evidencia,
+                                                    estatus="Cargado",
+                                                    ruta_archivo=ruta_ev,
+                                                ))
+                                            else:
+                                                doc_ev.estatus = "Cargado"
+                                                doc_ev.ruta_archivo = ruta_ev
                                             db.commit()
+                                            st.success("Evidencia cargada y registrada.")
                                             st.rerun()
                                         except Exception as e:
-                                            st.error(f"Error subiendo evidencia: {e}")
+                                            db.rollback()
+                                            st.error(f"No se pudo guardar la evidencia: {e}")
 
             # ==========================================
             # TAB 3: PAQUETE DOCUMENTAL Y TRAZABILIDAD
@@ -345,7 +359,11 @@ def render_gestor(db, user_actual, tab_expedientes):
             with subtab_paquete:
                 st.write("📄 **Gestión del Paquete Documental**")
                 
-                doc_exp = db.query(DocumentoExpediente).filter_by(participacion_id=part.id, tipo_documento="Paquete Unificado").first()
+                doc_exp = db.query(DocumentoExpediente).filter_by(
+                    participacion_id=part.id,
+                    categoria_documento="Paquete",
+                    tipo_documento="Paquete Unificado",
+                ).first()
                 plantillas_aplicables = [tpl for tpl in db.query(PlantillaFormato).all() if tpl.roles_aplica and part.rol in tpl.roles_aplica]
 
                 col_izq, col_der = st.columns([1, 1])
@@ -356,55 +374,128 @@ def render_gestor(db, user_actual, tab_expedientes):
                     if not plantillas_aplicables:
                         st.error("No hay formatos configurados para este rol.")
                     else:
-                        if st.button(f"Generar Paquete PDF Unificado", key=f"btn_gen_{part.id}"):
-                            context = {"nombre": part.persona.razon_social_nombre, "rfc": part.persona.rfc or "", **datos_actuales}
-                            lista_pdfs = []
-                            with st.spinner("Compilando documentos y convirtiendo a PDF... Esto puede tomar unos segundos."):
-                                for tpl in plantillas_aplicables:
-                                    if tpl.ruta_plantilla_word:
+                        if st.button(
+                            "Generar Paquete PDF Unificado",
+                            key=f"btn_gen_{part.id}",
+                            disabled=es_solo_lectura,
+                        ):
+                            if supabase_client is None:
+                                st.error("Supabase Storage no está configurado; no se puede generar el paquete.")
+                            else:
+                                context = {"nombre": part.persona.razon_social_nombre, "rfc": part.persona.rfc or "", **datos_actuales}
+                                lista_pdfs = []
+                                with st.spinner("Compilando documentos y convirtiendo a PDF... Esto puede tomar unos segundos."):
+                                    for tpl in plantillas_aplicables:
+                                        if not tpl.ruta_plantilla_word:
+                                            continue
                                         ext = os.path.splitext(tpl.ruta_plantilla_word)[1].lower()
                                         try:
                                             archivo_bytes = supabase_client.storage.from_("expedientes").download(tpl.ruta_plantilla_word)
-                                            doc_procesado = procesar_word(archivo_bytes, context) if ext == ".docx" else procesar_excel(archivo_bytes, context) if ext == ".xlsx" else None
+                                            doc_procesado = (
+                                                procesar_word(archivo_bytes, context) if ext == ".docx"
+                                                else procesar_excel(archivo_bytes, context) if ext == ".xlsx"
+                                                else None
+                                            )
                                             if doc_procesado:
                                                 lista_pdfs.append(convertir_a_pdf(doc_procesado, ext))
                                         except Exception as e:
                                             st.error(f"Error procesando '{tpl.nombre}': {e}")
                                 if lista_pdfs:
                                     pdf_final_bytes = fusionar_pdfs(lista_pdfs)
-                                    st.session_state[f'pdf_bytes_{part.id}'] = pdf_final_bytes
-                                    if not doc_exp:
-                                        db.add(DocumentoExpediente(participacion_id=part.id, categoria_documento="Paquete", tipo_documento="Paquete Unificado", estatus="Generado"))
-                                    else:
-                                        doc_exp.estatus = "Actualizado"
-                                    db.commit()
-                                    st.rerun()
+                                    ruta_paquete = f"paquetes/{part.id}/paquete-unificado.pdf"
+                                    try:
+                                        supabase_client.storage.from_("expedientes").upload(
+                                            file=pdf_final_bytes,
+                                            path=ruta_paquete,
+                                            file_options={"content-type": "application/pdf", "x-upsert": "true"},
+                                        )
+                                        if not doc_exp:
+                                            doc_exp = DocumentoExpediente(
+                                                participacion_id=part.id,
+                                                categoria_documento="Paquete",
+                                                tipo_documento="Paquete Unificado",
+                                                estatus="Generado",
+                                                ruta_archivo=ruta_paquete,
+                                                metadata_json={"ruta_paquete_generado": ruta_paquete},
+                                            )
+                                            db.add(doc_exp)
+                                        else:
+                                            metadata = dict(doc_exp.metadata_json or {})
+                                            metadata["ruta_paquete_generado"] = ruta_paquete
+                                            doc_exp.metadata_json = metadata
+                                            doc_exp.ruta_archivo = ruta_paquete
+                                            doc_exp.estatus = "Actualizado"
+                                            flag_modified(doc_exp, "metadata_json")
+                                        db.commit()
+                                        st.session_state[f"pdf_bytes_{part.id}"] = pdf_final_bytes
+                                        st.success("Paquete generado y guardado en almacenamiento.")
+                                        st.rerun()
+                                    except Exception as e:
+                                        db.rollback()
+                                        st.error(f"No se pudo guardar el paquete generado: {e}")
                                 else:
                                     st.error("No se pudo generar ningún documento. Verifique las plantillas.")
 
-                        if doc_exp or f'pdf_bytes_{part.id}' in st.session_state:
-                            if f'pdf_bytes_{part.id}' in st.session_state:
-                                st.download_button("⬇️ 1. Descargar Paquete (.pdf)", data=st.session_state[f'pdf_bytes_{part.id}'], file_name=f"Paquete_{part.persona.razon_social_nombre.replace(' ', '_')}.pdf", mime="application/pdf", key=f"dl_{part.id}")
-                            else:
-                                st.info("Por favor, vuelve a dar clic en 'Generar Paquete PDF' para cargar el archivo en memoria.")
+                        ruta_paquete_guardado = (
+                            (doc_exp.metadata_json or {}).get("ruta_paquete_generado")
+                            if doc_exp else None
+                        ) or (doc_exp.ruta_archivo if doc_exp and doc_exp.estatus not in ["Firmado y Cargado", "Enviado Físicamente", "Recibido", "Validado Original"] else None)
+                        if doc_exp and ruta_paquete_guardado:
+                            clave_pdf = f"pdf_bytes_{part.id}"
+                            if clave_pdf not in st.session_state:
+                                try:
+                                    if supabase_client is None:
+                                        raise RuntimeError("Supabase Storage no está configurado.")
+                                    st.session_state[clave_pdf] = supabase_client.storage.from_("expedientes").download(ruta_paquete_guardado)
+                                except Exception as e:
+                                    st.warning(f"No se pudo recuperar el paquete guardado: {e}")
+                            if clave_pdf in st.session_state:
+                                st.download_button(
+                                    "⬇️ 1. Descargar Paquete (.pdf)",
+                                    data=st.session_state[clave_pdf],
+                                    file_name=f"Paquete_{limpiar_nombre_archivo(part.persona.razon_social_nombre)}.pdf",
+                                    mime="application/pdf",
+                                    key=f"dl_{part.id}",
+                                )
+                        elif doc_exp:
+                            st.info("El paquete está registrado, pero no tiene una ruta de descarga. Genérelo nuevamente.")
                                 
                 with col_der:
-                    archivo_subido = st.file_uploader("⬆️ 3. Subir Paquete Firmado (.pdf)", type=["pdf"], key=f"up_{part.id}", disabled=es_solo_lectura)
-                    if archivo_subido is not None:
+                    if not doc_exp:
+                        st.info("Genere primero el paquete documental para habilitar la carga del documento firmado.")
+                    archivo_subido = st.file_uploader(
+                        "⬆️ 3. Subir Paquete Firmado (.pdf)",
+                        type=["pdf"],
+                        key=f"up_{part.id}",
+                        disabled=es_solo_lectura or not doc_exp,
+                    )
+                    if archivo_subido is not None and doc_exp:
                         if st.button("Confirmar Entrega de Documento", key=f"btn_up_{part.id}", disabled=es_solo_lectura):
                             ts = int(datetime.datetime.now().timestamp())
                             proy_limpio = limpiar_nombre_archivo(part.proyecto.nombre)
                             pers_limpio = limpiar_nombre_archivo(part.persona.razon_social_nombre)
-                            ruta_pdf = f"firmados/{proy_limpio}-{pers_limpio}-formatos-{ts}.pdf"
+                            ruta_pdf = f"firmados/{part.id}/{ts}-paquete-firmado.pdf"
                             try:
-                                supabase_client.storage.from_("expedientes").upload(file=archivo_subido.getvalue(), path=ruta_pdf, file_options={"content-type": "application/pdf", "x-upsert": "true"})
+                                if supabase_client is None:
+                                    raise RuntimeError("Supabase Storage no está configurado.")
+                                supabase_client.storage.from_("expedientes").upload(
+                                    file=archivo_subido.getvalue(),
+                                    path=ruta_pdf,
+                                    file_options={"content-type": "application/pdf", "x-upsert": "true"},
+                                )
+                                metadata = dict(doc_exp.metadata_json or {})
+                                metadata["ruta_paquete_generado"] = metadata.get("ruta_paquete_generado") or doc_exp.ruta_archivo
+                                metadata["ruta_paquete_firmado"] = ruta_pdf
+                                doc_exp.metadata_json = metadata
                                 doc_exp.estatus = "Firmado y Cargado"
                                 doc_exp.ruta_archivo = ruta_pdf
+                                flag_modified(doc_exp, "metadata_json")
                                 db.commit()
-                                st.success("¡Documento enviado y resguardado en la nube de forma segura!")
+                                st.success("Documento firmado cargado y registrado.")
                                 st.rerun()
                             except Exception as e:
-                                st.error(f"Error subiendo a la nube: {e}")
+                                db.rollback()
+                                st.error(f"No se pudo guardar el documento firmado: {e}")
 
                 if doc_exp and plantillas_aplicables:
                     st.markdown("### 📋 Instrucciones de Firma")

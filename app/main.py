@@ -41,7 +41,12 @@ def dashboard_principal():
             st.markdown("### 📋 Mis Expedientes")
 
         # El gestor se renderiza para todos
-        render_gestor(db, user_actual, tab_expedientes)
+        render_gestor(
+            db,
+            user_actual,
+            tab_expedientes,
+            allowed_project_ids=mis_proy_ids if is_admin else None,
+        )
 
     except Exception as e:
         st.error(f"🚨 Error crítico en el sistema: {e}")

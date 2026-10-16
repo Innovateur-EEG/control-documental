@@ -427,7 +427,10 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                                 with col_btn_desv:
                                     if st.button("❌ Quitar Acceso", key="btn_desv_usr"):
                                         for p_obj in parts_objs_sel:
-                                            db.query(UsuarioPersonaGestor).filter_by(persona_id=p_obj.persona.id).delete()
+                                            db.query(UsuarioPersonaGestor).filter_by(
+                                                usuario_id=u_id,
+                                                persona_id=p_obj.persona.id,
+                                            ).delete()
                                             d_json = dict(p_obj.persona.datos_json or {})
                                             d_json.pop("permisos_usuarios", None)
                                             d_json.pop("permiso_hijas", None)
@@ -547,7 +550,7 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                                         db.query(DocumentoExpediente).filter(DocumentoExpediente.participacion_id == part.id).delete()
                                         db.query(JerarquiaParticipacion).filter((JerarquiaParticipacion.padre_id == part.id) | (JerarquiaParticipacion.hijo_id == part.id)).delete()
                                         db.delete(part)
-                                    p_obj.gestores = []
+                                    p_obj.usuarios_asignados = []
                                     db.delete(p_obj)
                             db.commit()
                             st.success("Entidades y sus relaciones eliminadas exitosamente.")
