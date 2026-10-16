@@ -1,7 +1,7 @@
 # WBS 1.2 — Dynamic Capture Controls
 
 **Branch:** `dev`  
-**Status:** Implementation complete; local test execution pending.
+**Status:** Implementation complete; targeted automated tests passed (41 tests); full-suite and UI verification remain pending.
 
 ## Scope delivered
 
@@ -44,16 +44,16 @@ Dependent options:
 
 ## Acceptance and deferred verification
 
-The implementation scope is complete on `dev`, but this is **not a test-verified release**. The developer reported being offline, so test execution is explicitly deferred.
+The implementation scope is complete on `dev`, but this is **not a test-verified release**. The targeted dynamic-field test file was run locally on 2026-10-16 and all 41 tests passed. The full test suite and manual UI regression checks remain pending.
 
 When online, run:
 
 ```powershell
-mise exec -- python -m pytest tests/test_dynamic_fields.py -q
+mise exec --command "python -m pytest tests/test_dynamic_fields.py -q"
 mise test
 ```
 
-Resolve failures before treating WBS 1.2 as technically accepted. Then perform a local UI check for:
+Run the full suite and resolve failures before treating WBS 1.2 as technically accepted. Then perform a local UI check for:
 1. A condition becoming true and false during editing.
 2. A dependent selection changing after its parent changes.
 3. An obsolete dependent selection being rejected on save.
@@ -73,5 +73,5 @@ Resolve failures before treating WBS 1.2 as technically accepted. Then perform a
 ## Sprint exit decision
 
 **Implementation exit:** complete.  
-**Verification exit:** pending local tests and UI regression checks.  
+**Verification exit:** targeted tests passed; full-suite and UI regression checks pending.  
 **Merge to `main`:** not performed.
