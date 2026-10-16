@@ -8,7 +8,7 @@ from docxtpl import DocxTemplate
 from sqlalchemy.orm.attributes import flag_modified
 from app.models.database import Participacion, JerarquiaParticipacion, DocumentoExpediente, PlantillaFormato, ConfiguracionCampos, ConfiguracionEvidencia, supabase_client
 from app.utils.documentos import procesar_excel, procesar_word, convertir_a_pdf, fusionar_pdfs
-from app.utils.dynamic_fields import checkbox_value, dependent_options, field_config, field_is_visible, number_widget_options, text_widget_options
+from app.utils.dynamic_fields import checkbox_value, dependent_options, field_config, field_is_visible, merge_capture_values, number_widget_options, text_widget_options, validate_submitted_value
 
 def limpiar_nombre_archivo(nombre: str) -> str:
     import unicodedata, re
@@ -263,6 +263,18 @@ def render_gestor(db, user_actual, tab_expedientes):
                             config = _field_config(c)
                             if config.get("required", False) and (val is None or val == "" or val == [] or (c.tipo_input == "Casilla" and val is not True)):
                                 errores.append(f"❌ '{c.nombre_mostrar}' es obligatorio.")
+                            if "options_map" in config:
+                                valores_validacion = dict(datos_actuales)
+                                valores_validacion.update(nuevos_datos)
+                                for llave_regla, campo_regla in campo_por_llave.items():
+                                    clave_regla = f"field_{part.id}_{campo_regla.id}"
+                                    if clave_regla in st.session_state:
+                                        valores_validacion[llave_regla] = st.session_state[clave_regla]
+                                try:
+                                    if not validate_submitted_value(config, val, valores_validacion, c.opciones_json or []):
+                                        errores.append(f"❌ '{c.nombre_mostrar}' contiene una opción no permitida para la selección actual.")
+                                except ValueError as exc:
+                                    errores.append(f"❌ Configuración inválida para '{c.nombre_mostrar}': {exc}")
                             if c.tipo_input == "Fecha" and isinstance(val, datetime.date):
                                 if c.regla_validacion == "max_90_dias":
                                     diff = (datetime.date.today() - val).days
@@ -278,9 +290,11 @@ def render_gestor(db, user_actual, tab_expedientes):
                                 st.error(e)
                         else:
                             # Merge submitted values so unrelated and hidden conditional fields are preserved.
-                            datos_guardados = dict(datos_actuales)
-                            for k, v in nuevos_datos.items():
-                                datos_guardados[k] = v.strftime("%Y-%m-%d") if isinstance(v, datetime.date) else v
+                            valores_a_guardar = {
+                                k: (v.strftime("%Y-%m-%d") if isinstance(v, datetime.date) else v)
+                                for k, v in nuevos_datos.items()
+                            }
+                            datos_guardados = merge_capture_values(datos_actuales, valores_a_guardar)
                             part.persona.datos_json = datos_guardados
                             flag_modified(part.persona, "datos_json")
                             db.commit()
