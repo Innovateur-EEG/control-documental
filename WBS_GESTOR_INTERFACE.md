@@ -36,7 +36,7 @@ mise test
 Use a non-production test project and accounts. Do not validate destructive actions against production data.
 
 1. A Gestor with no assignments sees the empty-state message.
-2. A directly assigned person appears in the correct project; a project Admin does not see that person's participation in another project they do not administer.
+2. A directly assigned person appears in the correct project; a project Admin does not see that person's participation in another project they do not administer. Confirm this restriction in the Gestor view, “Revisión de Expedientes Individuales,” “Herramientas de Exportación,” and the entity catalog. Confirm “Tablero de Avance Documental” still shows all projects.
 3. A descendant of an assigned person appears; nested descendants inherit the nearest assigned ancestor's permission.
 4. A read-only user can inspect and download existing material but cannot save capture data, upload evidence, generate a package, upload a signed package, or change traceability.
 5. A writable user can save capture data; unrelated JSON keys and hidden conditional-field values remain intact.
