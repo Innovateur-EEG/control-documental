@@ -39,13 +39,23 @@ Use a non-production test project and accounts. Do not validate destructive acti
 2. A directly assigned person appears in the correct project; a project Admin does not see that person's participation in another project they do not administer. Confirm this restriction in the Gestor view, “Revisión de Expedientes Individuales,” “Herramientas de Exportación,” and the entity catalog. Confirm “Tablero de Avance Documental” still shows all projects.
 3. A descendant of an assigned person appears; nested descendants inherit the nearest assigned ancestor's permission.
 4. A read-only user can inspect and download existing material but cannot save capture data, upload evidence, generate a package, upload a signed package, or change traceability.
-5. A writable user can save capture data; unrelated JSON keys and hidden conditional-field values remain intact.
-6. Upload an evidence file and verify both the storage object and database row exist. Simulate a storage failure and verify no row is committed.
+5. **How to test:** use a writable test user and a test entity with at least one field controlled by `visible_if`. Record the current value of that conditional field and one unrelated field. Change the controlling field so the conditional field disappears, save, then change the condition back so it reappears. Verify its prior value is preserved. Change and save one unrelated field too, and verify that value persists after rerun/reopening the entity. If no conditional field is configured, create a temporary test configuration first; do not alter production data.
+6. **How to test:** upload a small harmless file to a test entity. Verify it appears in the app and in the `expedientes` Supabase Storage bucket, and that a matching `DocumentoExpediente` row exists. For the failure case, use a non-production environment and temporarily make the evidence-upload storage call fail (for example, use a deliberately nonexistent test bucket in the local evidence-upload code), attempt an upload, and verify the app reports the failure and no new database row is created. Restore the bucket name immediately afterward. Do not perform this failure simulation against production. A dedicated automated mock test is preferable if one is added.
 7. Generate a package, leave the page/session, return, and download the same persisted package.
 8. Upload a signed PDF; verify the signed path and status are stored while the generated-package path remains available in metadata.
 9. Enter courier delivery details; verify the method, date, carrier, and tracking number persist after rerun.
 10. Remove one selected user's access and verify other users' assignments remain.
 11. Run the full test suite; check generated Word/Excel/PDF outputs against a known sample.
+
+## Latest manual UX results (2026-10-19)
+
+- Items 1–4 passed, including the prior project-scope checks. The intermittent blank-screen issue has not recurred; continue monitoring.
+- Items 5 and 6 remain pending; the instructions above describe how to validate them safely.
+
+## Additional UX requirements
+
+- “Directorio de Usuarios y Accesos” must be visible only to SuperAdmin. The section is now rendered only for SuperAdmin.
+- The project-linking picker must not expose arbitrary global entities to a project Admin. It now limits Admin candidates to entities already within their assigned-project scope and excludes entities already linked to the selected target project. SuperAdmin can choose any entity not already linked to that target project.
 
 ## UX test findings (2026-10-19)
 
