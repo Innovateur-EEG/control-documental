@@ -450,35 +450,53 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                                         st.rerun()
 
                 # 4. Formulario de Vinculación Rápida
-                # Keep this available even when a project has no participations yet,
-                # so a fresh project can be initialized through the UI.
+                # Limit Admins to entities already within their assigned-project
+                # scope, and exclude entities already linked to the target project.
                 st.divider()
                 with st.expander("➕ Vincular Persona / Entidad Existente al Proyecto", expanded=False):
-                    p_catalogo = db.query(Persona).order_by(Persona.razon_social_nombre).all()
                     if not roles_disponibles:
                         st.warning("No hay roles configurados en Catálogos. Agregue valores en 'Catálogos' antes de vincular personas.")
-                    elif not p_catalogo:
-                        st.warning("El Catálogo Maestro está vacío. Agregue primero una persona o entidad.")
+                    elif not proyectos_activos:
+                        st.info("No hay proyectos disponibles para vincular personas.")
                     else:
-                        with st.form("form_vinc_exist"):
-                            proy_target = st.selectbox(
-                                "Proyecto destino:",
-                                options=[p.id for p in proyectos_activos],
-                                format_func=lambda x: proy_dict.get(x, "")
-                            )
-                            p_id_vinc = st.selectbox(
-                                "Persona:",
-                                options=[p.id for p in p_catalogo],
-                                format_func=lambda x: next(
-                                    f"{p.razon_social_nombre} ({p.tipo})"
-                                    for p in p_catalogo if p.id == x
+                        proy_target = st.selectbox(
+                            "Proyecto destino:",
+                            options=[p.id for p in proyectos_activos],
+                            format_func=lambda x: proy_dict.get(x, ""),
+                            key="proy_target_vinculacion"
+                        )
+                        personas_ya_vinculadas = {
+                            persona_id for (persona_id,) in db.query(Participacion.persona_id).filter(
+                                Participacion.proyecto_id == proy_target
+                            ).all()
+                        }
+                        consulta_personas = db.query(Persona)
+                        if not is_super:
+                            consulta_personas = consulta_personas.filter(
+                                Persona.participaciones.any(
+                                    Participacion.proyecto_id.in_(mis_proy_ids)
                                 )
                             )
-                            r_vinc = st.selectbox("Rol:", options=roles_disponibles)
-                            if st.form_submit_button("Vincular al Proyecto"):
-                                if not db.query(Participacion).filter_by(
-                                    proyecto_id=proy_target, persona_id=p_id_vinc
-                                ).first():
+                        p_catalogo = consulta_personas.order_by(Persona.razon_social_nombre).all()
+                        p_catalogo = [
+                            persona for persona in p_catalogo
+                            if persona.id not in personas_ya_vinculadas
+                        ]
+
+                        if not p_catalogo:
+                            st.info("No hay entidades disponibles para vincular a este proyecto dentro de tu alcance.")
+                        else:
+                            with st.form("form_vinc_exist"):
+                                p_id_vinc = st.selectbox(
+                                    "Persona / Entidad disponible:",
+                                    options=[p.id for p in p_catalogo],
+                                    format_func=lambda x: next(
+                                        f"{p.razon_social_nombre} ({p.tipo})"
+                                        for p in p_catalogo if p.id == x
+                                    )
+                                )
+                                r_vinc = st.selectbox("Rol:", options=roles_disponibles)
+                                if st.form_submit_button("Vincular al Proyecto"):
                                     db.add(Participacion(
                                         proyecto_id=proy_target,
                                         persona_id=p_id_vinc,
@@ -486,9 +504,7 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                                     ))
                                     db.commit()
                                     st.rerun()
-                                else:
-                                    st.warning("Esta persona ya está en ese proyecto.")
-
+                                   
                 # =================================================================
                 # NUEVA SECCIÓN: CATÁLOGO DE PERSONAS (Editable con agregaciones)
                 # =================================================================
@@ -572,123 +588,125 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                                         db.delete(part)
                                     p_obj.usuarios_asignados = []
                                     db.delete(p_obj)
-                            db.commit()
-                            st.success("Entidades y sus relaciones eliminadas exitosamente.")
-                            st.rerun()
-                            
-                with st.expander("➕ Alta Rápida en Catálogo (Sin asignar a proyecto)", expanded=False):
-                    with st.form("form_alta_catalogo_puro"):
-                        c_t1, c_t2 = st.columns(2)
-                        t_p = c_t1.selectbox("Tipo", ["Moral", "Fisica"])
-                        r_p = c_t2.text_input("RFC (Opcional)")
-                        nom_p = st.text_input("Nombre o Razón Social")
-                        if st.form_submit_button("Agregar al Catálogo Maestro") and nom_p:
-                            db.add(Persona(tipo=t_p, rfc=r_p, razon_social_nombre=nom_p))
-                            db.commit()
-                            st.rerun()
-
-                # =================================================================
-                # NUEVA SECCIÓN: DIRECTORIO DE USUARIOS (Editable)
-                # =================================================================
-                st.divider()
-                st.markdown("### 🔑 Directorio de Usuarios y Accesos")
-                st.write("Agregue nuevos usuarios en una fila vacía con el botón `+`, edite los existentes o seleccione casillas para eliminar / restablecer contraseña.")
-                
-                usuarios_lista = db.query(Usuario).order_by(Usuario.email).all()
-                datos_usr = []
-                for u in usuarios_lista:
-                    estatus_pwd = "⚠️ Temporal" if u.debe_cambiar_password == 1 else "✅ Activa"
-                    datos_usr.append({
-                        "Sel": False,
-                        "ID": u.id,
-                        "Correo": u.email,
-                        "Teléfono": u.telefono or "",
-                        "Estatus Contraseña": estatus_pwd,
-                        "Rol": u.tipo_usuario
-                    })
+                            if is_super:
+                    db.commit()
+                                st.success("Entidades y sus relaciones eliminadas exitosamente.")
+                                st.rerun()
+                                
+                    with st.expander("➕ Alta Rápida en Catálogo (Sin asignar a proyecto)", expanded=False):
+                        with st.form("form_alta_catalogo_puro"):
+                            c_t1, c_t2 = st.columns(2)
+                            t_p = c_t1.selectbox("Tipo", ["Moral", "Fisica"])
+                            r_p = c_t2.text_input("RFC (Opcional)")
+                            nom_p = st.text_input("Nombre o Razón Social")
+                            if st.form_submit_button("Agregar al Catálogo Maestro") and nom_p:
+                                db.add(Persona(tipo=t_p, rfc=r_p, razon_social_nombre=nom_p))
+                                db.commit()
+                                st.rerun()
+    
+                    # =================================================================
+                    # NUEVA SECCIÓN: DIRECTORIO DE USUARIOS (Editable)
+                    # =================================================================
+                    st.divider()
+                    st.markdown("### 🔑 Directorio de Usuarios y Accesos")
+                    st.write("Agregue nuevos usuarios en una fila vacía con el botón `+`, edite los existentes o seleccione casillas para eliminar / restablecer contraseña.")
                     
-                df_usr = pd.DataFrame(datos_usr) if datos_usr else pd.DataFrame(columns=["Sel", "ID", "Correo", "Teléfono", "Estatus Contraseña", "Rol"])
-                
-                # Para permitir inline-creation, el correo no debe estar en la lista de bloqueados
-                cols_usr_readonly = ["ID", "Estatus Contraseña"]
-                if not is_super:
-                    cols_usr_readonly.append("Rol")
-                    
-                df_usr_edit = st.data_editor(
-                    df_usr,
-                    num_rows="dynamic", # Habilita agregar filas con '+'
-                    hide_index=True,
-                    use_container_width=True,
-                    disabled=cols_usr_readonly,
-                    column_config={
-                        "Sel": st.column_config.CheckboxColumn("Seleccionar", default=False),
-                        "ID": None,
-                        "Correo": st.column_config.TextColumn("Correo (Editable)", required=True),
-                        "Rol": st.column_config.SelectboxColumn("Rol", options=["Usuario", "Admin", "SuperAdmin"], default="Usuario")
-                    },
-                    key="editor_usuarios_dir"
-                )
-                
-                col_ubtn1, col_ubtn2 = st.columns([1, 1])
-                with col_ubtn1:
-                    if st.button("💾 Guardar Cambios en Usuarios", key="btn_save_usrs"):
-                        for _, row in df_usr_edit.iterrows():
-                            val_id = row.get("ID")
-                            correo_u = str(row.get("Correo")).strip().lower()
-                            tel_u = row.get("Teléfono")
-                            rol_u = row.get("Rol") if pd.notna(row.get("Rol")) else "Usuario"
-                            
-                            if correo_u and correo_u != "nan":
-                                if pd.notna(val_id) and str(val_id).strip() != "":
-                                    # --- ACTUALIZAR EXISTENTE ---
-                                    u_obj = db.query(Usuario).filter(Usuario.id == int(val_id)).first()
-                                    if u_obj:
-                                        # Actualizar correo solo si no choca con otro existente
-                                        if u_obj.email != correo_u:
-                                            if not db.query(Usuario).filter(Usuario.email == correo_u).first():
-                                                u_obj.email = correo_u
-                                        u_obj.telefono = tel_u
-                                        if is_super:
-                                            u_obj.tipo_usuario = rol_u
-                                else:
-                                    # --- CREAR NUEVO (Inline) ---
-                                    if not db.query(Usuario).filter(Usuario.email == correo_u).first():
-                                        nuevo_u = Usuario(
-                                            email=correo_u,
-                                            telefono=tel_u,
-                                            password_hash=generar_hash("Temporal123!"),
-                                            tipo_usuario=rol_u if is_super else "Usuario",
-                                            debe_cambiar_password=1
-                                        )
-                                        db.add(nuevo_u)
-                        db.commit()
-                        st.success("Usuarios actualizados exitosamente.")
-                        st.rerun()
+                    usuarios_lista = db.query(Usuario).order_by(Usuario.email).all()
+                    datos_usr = []
+                    for u in usuarios_lista:
+                        estatus_pwd = "⚠️ Temporal" if u.debe_cambiar_password == 1 else "✅ Activa"
+                        datos_usr.append({
+                            "Sel": False,
+                            "ID": u.id,
+                            "Correo": u.email,
+                            "Teléfono": u.telefono or "",
+                            "Estatus Contraseña": estatus_pwd,
+                            "Rol": u.tipo_usuario
+                        })
                         
-                with col_ubtn2:
-                    usrs_sel_df = df_usr_edit[df_usr_edit["Sel"] == True]
-                    if not usrs_sel_df.empty:
-                        if st.button("🗑️ Eliminar Usuarios Seleccionados", type="primary"):
-                            for uid in usrs_sel_df["ID"].tolist():
-                                if pd.notna(uid):
-                                    u_obj = db.query(Usuario).filter(Usuario.id == int(uid)).first()
-                                    if u_obj:
-                                        if u_obj.id == st.session_state['usuario_id']:
-                                            st.error("No puedes eliminar tu propia sesión activa.")
-                                            continue
-                                            
-                                        u_obj.proyectos_admin = []
-                                        # Eliminamos las asignaciones de forma segura
-                                        db.query(UsuarioPersonaGestor).filter_by(usuario_id=u_obj.id).delete()
-                                        db.delete(u_obj)
+                    df_usr = pd.DataFrame(datos_usr) if datos_usr else pd.DataFrame(columns=["Sel", "ID", "Correo", "Teléfono", "Estatus Contraseña", "Rol"])
+                    
+                    # Para permitir inline-creation, el correo no debe estar en la lista de bloqueados
+                    cols_usr_readonly = ["ID", "Estatus Contraseña"]
+                    if not is_super:
+                        cols_usr_readonly.append("Rol")
+                        
+                    df_usr_edit = st.data_editor(
+                        df_usr,
+                        num_rows="dynamic", # Habilita agregar filas con '+'
+                        hide_index=True,
+                        use_container_width=True,
+                        disabled=cols_usr_readonly,
+                        column_config={
+                            "Sel": st.column_config.CheckboxColumn("Seleccionar", default=False),
+                            "ID": None,
+                            "Correo": st.column_config.TextColumn("Correo (Editable)", required=True),
+                            "Rol": st.column_config.SelectboxColumn("Rol", options=["Usuario", "Admin", "SuperAdmin"], default="Usuario")
+                        },
+                        key="editor_usuarios_dir"
+                    )
+                    
+                    col_ubtn1, col_ubtn2 = st.columns([1, 1])
+                    with col_ubtn1:
+                        if st.button("💾 Guardar Cambios en Usuarios", key="btn_save_usrs"):
+                            for _, row in df_usr_edit.iterrows():
+                                val_id = row.get("ID")
+                                correo_u = str(row.get("Correo")).strip().lower()
+                                tel_u = row.get("Teléfono")
+                                rol_u = row.get("Rol") if pd.notna(row.get("Rol")) else "Usuario"
+                                
+                                if correo_u and correo_u != "nan":
+                                    if pd.notna(val_id) and str(val_id).strip() != "":
+                                        # --- ACTUALIZAR EXISTENTE ---
+                                        u_obj = db.query(Usuario).filter(Usuario.id == int(val_id)).first()
+                                        if u_obj:
+                                            # Actualizar correo solo si no choca con otro existente
+                                            if u_obj.email != correo_u:
+                                                if not db.query(Usuario).filter(Usuario.email == correo_u).first():
+                                                    u_obj.email = correo_u
+                                            u_obj.telefono = tel_u
+                                            if is_super:
+                                                u_obj.tipo_usuario = rol_u
+                                    else:
+                                        # --- CREAR NUEVO (Inline) ---
+                                        if not db.query(Usuario).filter(Usuario.email == correo_u).first():
+                                            nuevo_u = Usuario(
+                                                email=correo_u,
+                                                telefono=tel_u,
+                                                password_hash=generar_hash("Temporal123!"),
+                                                tipo_usuario=rol_u if is_super else "Usuario",
+                                                debe_cambiar_password=1
+                                            )
+                                            db.add(nuevo_u)
                             db.commit()
-                            st.success("Usuarios eliminados del sistema.")
+                            st.success("Usuarios actualizados exitosamente.")
                             st.rerun()
                             
-                # Reset Masivo de Contraseñas
-                if not usrs_sel_df.empty:
-                    with st.expander(f"🔑 Restablecer Contraseña ({len(usrs_sel_df)} usuarios seleccionados)", expanded=True):
-                        st.warning("Se sobrescribirá la contraseña actual. No olvide notificar a los usuarios.")
+                    with col_ubtn2:
+                        usrs_sel_df = df_usr_edit[df_usr_edit["Sel"] == True]
+                        if not usrs_sel_df.empty:
+                            if st.button("🗑️ Eliminar Usuarios Seleccionados", type="primary"):
+                                for uid in usrs_sel_df["ID"].tolist():
+                                    if pd.notna(uid):
+                                        u_obj = db.query(Usuario).filter(Usuario.id == int(uid)).first()
+                                        if u_obj:
+                                            if u_obj.id == st.session_state['usuario_id']:
+                                                st.error("No puedes eliminar tu propia sesión activa.")
+                                                continue
+                                                
+                                            u_obj.proyectos_admin = []
+                                            # Eliminamos las asignaciones de forma segura
+                                            db.query(UsuarioPersonaGestor).filter_by(usuario_id=u_obj.id).delete()
+                                            db.delete(u_obj)
+                                db.commit()
+                                st.success("Usuarios eliminados del sistema.")
+                                st.rerun()
+                                
+                    # Reset Masivo de Contraseñas
+                    if not usrs_sel_df.empty:
+                        with st.expander(f"🔑 Restablecer Contraseña ({len(usrs_sel_df)} usuarios seleccionados)", expanded=True):
+                            st.war
+ning("Se sobrescribirá la contraseña actual. No olvide notificar a los usuarios.")
                         nueva_pwd_temp = st.text_input("Nueva contraseña temporal:", value="Temporal123!")
                         if st.button("Confirmar Restablecimiento Masivo", key="btn_reset_masivo_usr"):
                             for uid in usrs_sel_df["ID"].tolist():
