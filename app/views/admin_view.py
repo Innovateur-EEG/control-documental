@@ -75,12 +75,22 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
         # ... (Código existente donde se renderiza la tabla del tablero de control) ...
             st.dataframe(df_tablero.style.map(color_estatus, subset=['Estatus Documental']), hide_index=True, use_container_width=True)
 
+        # Admins are restricted to participations in their assigned projects for
+        # individual review and export. The progress dashboard above stays global.
+        participaciones_revision = (
+            participaciones
+            if is_super
+            else db.query(Participacion).filter(
+                Participacion.proyecto_id.in_(mis_proy_ids)
+            ).all()
+        )
+
         # --- NUEVA SECCIÓN WBS 3.4.2: REVISIÓN DE EXPEDIENTES Y DESCARGA ---
         st.divider()
         st.subheader("🔍 Revisión de Expedientes Individuales")
         st.write("Seleccione un participante para revisar y descargar sus archivos de forma segura.")
         
-        part_opts = {p.id: f"[{p.proyecto.nombre}] {p.persona.razon_social_nombre} ({p.rol})" for p in participaciones}
+        part_opts = {p.id: f"[{p.proyecto.nombre}] {p.persona.razon_social_nombre} ({p.rol})" for p in participaciones_revision}
         if part_opts:
             part_sel_id = st.selectbox("Expediente a revisar:", options=list(part_opts.keys()), format_func=lambda x: part_opts[x])
             
@@ -112,9 +122,9 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
         with st.expander("📥 Exportar Base de Datos (Para Combinar Correspondencia)"):
             st.write("Descarga un archivo plano (CSV) con toda la información capturada de los participantes (incluyendo campos dinámicos) para usarlo en Microsoft Word u otros sistemas.")
             
-            if participaciones:
+            if participaciones_revision:
                 datos_export = []
-                for part in participaciones:
+                for part in participaciones_revision:
                     # Datos Relacionales Fijos
                     fila = {
                         "ID_Proyecto": part.proyecto.id,
@@ -485,7 +495,17 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                 st.divider()
                 st.markdown("### 👥 Catálogo Maestro de Entidades y Personas")
                 
-                personas_query = db.query(Persona).all() if is_super else db.query(Persona).join(Participacion).filter(Participacion.proyecto_id.in_(mis_proy_ids)).distinct().all()
+                # Use EXISTS rather than DISTINCT over Persona rows: datos_json is
+                # PostgreSQL JSON, which does not support equality comparisons.
+                personas_query = (
+                    db.query(Persona).all()
+                    if is_super
+                    else db.query(Persona).filter(
+                        Persona.participaciones.any(
+                            Participacion.proyecto_id.in_(mis_proy_ids)
+                        )
+                    ).all()
+                )
                 
                 datos_pers = []
                 for p in personas_query:
