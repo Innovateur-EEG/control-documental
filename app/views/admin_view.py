@@ -504,7 +504,7 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                                     ))
                                     db.commit()
                                     st.rerun()
-                                   
+
                 # =================================================================
                 # NUEVA SECCIÓN: CATÁLOGO DE PERSONAS (Editable con agregaciones)
                 # =================================================================
@@ -588,22 +588,22 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                                         db.delete(part)
                                     p_obj.usuarios_asignados = []
                                     db.delete(p_obj)
-                            if is_super:
-                    db.commit()
-                                st.success("Entidades y sus relaciones eliminadas exitosamente.")
-                                st.rerun()
-                                
-                    with st.expander("➕ Alta Rápida en Catálogo (Sin asignar a proyecto)", expanded=False):
-                        with st.form("form_alta_catalogo_puro"):
-                            c_t1, c_t2 = st.columns(2)
-                            t_p = c_t1.selectbox("Tipo", ["Moral", "Fisica"])
-                            r_p = c_t2.text_input("RFC (Opcional)")
-                            nom_p = st.text_input("Nombre o Razón Social")
-                            if st.form_submit_button("Agregar al Catálogo Maestro") and nom_p:
-                                db.add(Persona(tipo=t_p, rfc=r_p, razon_social_nombre=nom_p))
-                                db.commit()
-                                st.rerun()
-    
+                            db.commit()
+                            st.success("Entidades y sus relaciones eliminadas exitosamente.")
+                            st.rerun()
+                            
+                with st.expander("➕ Alta Rápida en Catálogo (Sin asignar a proyecto)", expanded=False):
+                    with st.form("form_alta_catalogo_puro"):
+                        c_t1, c_t2 = st.columns(2)
+                        t_p = c_t1.selectbox("Tipo", ["Moral", "Fisica"])
+                        r_p = c_t2.text_input("RFC (Opcional)")
+                        nom_p = st.text_input("Nombre o Razón Social")
+                        if st.form_submit_button("Agregar al Catálogo Maestro") and nom_p:
+                            db.add(Persona(tipo=t_p, rfc=r_p, razon_social_nombre=nom_p))
+                            db.commit()
+                            st.rerun()
+
+                if is_super:
                     # =================================================================
                     # NUEVA SECCIÓN: DIRECTORIO DE USUARIOS (Editable)
                     # =================================================================
@@ -705,20 +705,20 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                     # Reset Masivo de Contraseñas
                     if not usrs_sel_df.empty:
                         with st.expander(f"🔑 Restablecer Contraseña ({len(usrs_sel_df)} usuarios seleccionados)", expanded=True):
-                            st.war
-ning("Se sobrescribirá la contraseña actual. No olvide notificar a los usuarios.")
-                        nueva_pwd_temp = st.text_input("Nueva contraseña temporal:", value="Temporal123!")
-                        if st.button("Confirmar Restablecimiento Masivo", key="btn_reset_masivo_usr"):
-                            for uid in usrs_sel_df["ID"].tolist():
-                                if pd.notna(uid):
-                                    u_obj = db.query(Usuario).filter(Usuario.id == int(uid)).first()
-                                    if u_obj:
-                                        u_obj.password_hash = generar_hash(nueva_pwd_temp)
-                                        u_obj.debe_cambiar_password = 1
-                            db.commit()
-                            st.success("Contraseñas actualizadas.")
-                            st.rerun()
-        
+                            st.warning("Se sobrescribirá la contraseña actual. No olvide notificar a los usuarios.")
+                            nueva_pwd_temp = st.text_input("Nueva contraseña temporal:", value="Temporal123!")
+                            if st.button("Confirmar Restablecimiento Masivo", key="btn_reset_masivo_usr"):
+                                for uid in usrs_sel_df["ID"].tolist():
+                                    if pd.notna(uid):
+                                        u_obj = db.query(Usuario).filter(Usuario.id == int(uid)).first()
+                                        if u_obj:
+                                            u_obj.password_hash = generar_hash(nueva_pwd_temp)
+                                            u_obj.debe_cambiar_password = 1
+                                db.commit()
+                                st.success("Contraseñas actualizadas.")
+                                st.rerun()
+            
+    
         if is_super:
             # =========================================================
             # -- PLANTILLAS --
