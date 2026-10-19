@@ -7,7 +7,9 @@
 
 This work closes the end-user (gestor) workflow without redesigning the application or changing the existing metadata-driven capture configuration.
 
-- Project administrators see only participations in their assigned projects; SuperAdmin project scope remains global.
+- Project administrators see only participations in their assigned projects in the Gestor workflow, individual-file review, export tools, and the entity catalog; SuperAdmin project scope remains global.
+- The document-progress dashboard remains global for Admin and SuperAdmin, by explicit requirement.
+- Entity catalog scoping uses an EXISTS-style relationship filter, not DISTINCT over the full Persona row, because PostgreSQL JSON columns do not support equality comparisons.
 - Direct assignments take precedence; inherited permissions resolve through the nearest assigned ancestor.
 - Unknown/missing permissions fail closed to read-only.
 - Hierarchy traversal is cycle-safe.
@@ -44,6 +46,12 @@ Use a non-production test project and accounts. Do not validate destructive acti
 9. Enter courier delivery details; verify the method, date, carrier, and tracking number persist after rerun.
 10. Remove one selected user's access and verify other users' assignments remain.
 11. Run the full test suite; check generated Word/Excel/PDF outputs against a known sample.
+
+## UX test findings (2026-10-19)
+
+- **Confirmed defect:** project Admin view can fail with PostgreSQL `could not identify an equality operator for type json` when the entity catalog query applies `DISTINCT` to full `Persona` rows. Fixed on `dev` by using a relationship `EXISTS` filter.
+- **Confirmed scope defect:** “Revisión de Expedientes Individuales” and “Herramientas de Exportación” used the global participation list. Fixed on `dev` to use only participations from the Admin's assigned projects. The “Tablero de Avance Documental” remains global.
+- **Open UX defect:** after login, the screen intermittently appears blank for any user and recovers after refreshing and logging in again. Cause not yet established; capture the Streamlit terminal output and browser console at the time of occurrence before making a speculative fix.
 
 ## Known verification boundary
 
