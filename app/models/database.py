@@ -153,7 +153,8 @@ class ConfiguracionEvidencia(Base):
     id = Column(Integer, primary_key=True)
     nombre_evidencia = Column(String, nullable=False) 
     tipo_persona = Column(String, nullable=False)     
-    roles_aplica = Column(JSON, default=list)           
+    roles_aplica = Column(JSON, default=list)
+    configuracion_json = Column(JSON, nullable=False, default=dict)           
 
 # ==========================================
 # CONFIGURACIÓN SEGURA (CACHEADA Y SCOPEADA)
