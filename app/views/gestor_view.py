@@ -489,7 +489,7 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                                         metadata["ruta_paquete_generado"] = ruta_paquete
                                         for clave_entrega in (
                                             "ruta_paquete_firmado", "metodo", "fecha_envio",
-                                            "empresa", "guia",
+                                            "empresa", "guia", "responsables_proyecto",
                                         ):
                                             metadata.pop(clave_entrega, None)
                                         if ruta_firmado_anterior:
