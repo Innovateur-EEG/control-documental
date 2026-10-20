@@ -991,9 +991,15 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                         "Nombre de evidencia": e.nombre_evidencia,
                         "Tipo persona": e.tipo_persona,
                         "Roles (coma)": ", ".join(e.roles_aplica or []),
+                        "Configuración JSON": json.dumps(
+                            e.configuracion_json or {}, ensure_ascii=False
+                        ),
                     }
                     for e in evidencias_registradas
-                ], columns=["ID", "Nombre de evidencia", "Tipo persona", "Roles (coma)"])
+                ], columns=[
+                    "ID", "Nombre de evidencia", "Tipo persona", "Roles (coma)",
+                    "Configuración JSON"
+                ])
 
                 df_evidencias_editado = st.data_editor(
                     df_evidencias,
@@ -1010,6 +1016,9 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                         "Tipo persona": st.column_config.SelectboxColumn(
                             "Tipo persona", options=tipos_persona, required=True
                         ),
+                        "Configuración JSON": st.column_config.TextColumn(
+                            "Configuración JSON", width="large"
+                        ),
                     },
                 )
                 if st.button("Guardar cambios de evidencias", key="guardar_evidencias_crud"):
@@ -1022,9 +1031,10 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                             nombre = str(row.get("Nombre de evidencia") or "").strip()
                             tipo_persona = str(row.get("Tipo persona") or "").strip()
                             roles_txt = str(row.get("Roles (coma)") or "").strip()
+                            config_txt = str(row.get("Configuración JSON") or "{}").strip() or "{}"
                             id_val = row.get("ID")
                             id_registro = None if pd.isna(id_val) else int(id_val)
-                            if not nombre and not roles_txt and not id_registro:
+                            if not nombre and not roles_txt and config_txt in ("{}", "nan", "None") and not id_registro:
                                 continue
                             if not nombre:
                                 raise ValueError(f"Fila {numero_fila}: el nombre de evidencia es obligatorio.")
@@ -1032,6 +1042,14 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                                 raise ValueError(f"Fila {numero_fila}: Tipo persona no válido.")
                             if id_registro is not None and id_registro not in existentes:
                                 raise ValueError(f"Fila {numero_fila}: ID de evidencia desconocido.")
+                            try:
+                                config_json = json.loads(config_txt)
+                            except json.JSONDecodeError as exc:
+                                raise ValueError(f"Fila {numero_fila}: Configuración JSON inválida ({exc.msg}).")
+                            if not isinstance(config_json, dict):
+                                raise ValueError(f"Fila {numero_fila}: Configuración JSON debe ser un objeto.")
+                            if "vigencia" in config_json and not isinstance(config_json["vigencia"], (str, int, float, type(None))):
+                                raise ValueError(f"Fila {numero_fila}: 'vigencia' debe ser texto, número o null.")
                             if id_registro is not None:
                                 ids_presentes.add(id_registro)
                             cambios.append({
@@ -1039,6 +1057,7 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                                 "nombre": nombre,
                                 "tipo_persona": tipo_persona,
                                 "roles": [v.strip() for v in roles_txt.split(",") if v.strip()],
+                                "config": config_json,
                             })
                         nombres = [item["nombre"].casefold() for item in cambios]
                         if len(nombres) != len(set(nombres)):
@@ -1068,6 +1087,7 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                             registro.nombre_evidencia = item["nombre"]
                             registro.tipo_persona = item["tipo_persona"]
                             registro.roles_aplica = item["roles"]
+                            registro.configuracion_json = item["config"]
                             if item["id"] is None:
                                 db.add(registro)
                         for registro_id, registro in existentes.items():
