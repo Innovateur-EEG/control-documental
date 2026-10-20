@@ -40,7 +40,7 @@ Use a non-production test project and accounts. Do not validate destructive acti
 3. A descendant of an assigned person appears; nested descendants inherit the nearest assigned ancestor's permission.
 4. A read-only user can inspect and download existing material but cannot save capture data, upload evidence, generate a package, upload a signed package, or change traceability.
 5. **How to test:** use a writable test user and a test entity with at least one field controlled by `visible_if`. Record the current value of that conditional field and one unrelated field. Change the controlling field so the conditional field disappears, save, then change the condition back so it reappears. Verify its prior value is preserved. Change and save one unrelated field too, and verify that value persists after rerun/reopening the entity. If no conditional field is configured, create a temporary test configuration first; do not alter production data.
-6. **How to test:** upload a small harmless file to a test entity. Verify it appears in the app and in the `expedientes` Supabase Storage bucket, and that a matching `DocumentoExpediente` row exists. For the failure case, use a non-production environment and temporarily make the evidence-upload storage call fail (for example, use a deliberately nonexistent test bucket in the local evidence-upload code), attempt an upload, and verify the app reports the failure and no new database row is created. Restore the bucket name immediately afterward. Do not perform this failure simulation against production. A dedicated automated mock test is preferable if one is added.
+6. **How to test:** upload a small harmless file to a test entity. Verify it appears in the app and in the `expedientes` Supabase Storage bucket, and that a matching `DocumentoExpediente` row exists. The automated test `tests/test_evidencias.py` now simulates a storage failure and verifies rollback occurs without persisting a document record. Do not simulate storage failures by changing the bucket in production.
 7. Generate a package, leave the page/session, return, and download the same persisted package.
 8. Upload a signed PDF; verify the signed path and status are stored while the generated-package path remains available in metadata.
 9. Enter courier delivery details; verify the method, date, carrier, and tracking number persist after rerun.
@@ -62,6 +62,21 @@ Use a non-production test project and accounts. Do not validate destructive acti
 - **Confirmed defect:** project Admin view can fail with PostgreSQL `could not identify an equality operator for type json` when the entity catalog query applies `DISTINCT` to full `Persona` rows. Fixed on `dev` by using a relationship `EXISTS` filter.
 - **Confirmed scope defect:** “Revisión de Expedientes Individuales” and “Herramientas de Exportación” used the global participation list. Fixed on `dev` to use only participations from the Admin's assigned projects. The “Tablero de Avance Documental” remains global.
 - **Open UX defect:** after login, the screen intermittently appears blank for any user and recovers after refreshing and logging in again. Cause not yet established; capture the Streamlit terminal output and browser console at the time of occurrence before making a speculative fix.
+
+## UX feedback implementation (2026-10-20)
+
+Changes pushed to `dev`; they are not yet accepted as locally validated.
+
+- Added `visible_if` example for a field conditional on `estado_civil == "Casado"`.
+- Evidence upload now uses a form submission to keep file selection and upload action together; it supports replacing an existing evidence file. Evidence configuration now supports a JSON object, including an optional `vigencia` value displayed in the Gestor view.
+- Added `tests/test_evidencias.py` for storage-failure rollback and success-path persistence, plus a GitHub Actions workflow for targeted tests and Python compilation.
+- Added an additive migration for `configuracion_evidencias.configuracion_json` and `usuarios.nombre`. Run `mise run db-migrate` before using the updated app against an existing database; the migration does not delete existing data.
+- Changed the user-facing tab to “Documentos Adjuntos” and package workflow terminology to “Paquete para firma”.
+- Package workflow now displays sections in order 1 (download), 2 (signature instructions), 3 (attach signed package). Regeneration requires explicit confirmation and clears signed-package/delivery metadata; it attempts to remove the previous signed file from Storage.
+- Signed package upload button now reads “Cargar/Adjuntar paquete firmado”; the signed-file link action reads “Generar link de descarga”.
+- Project manager receipt control was moved to the document progress dashboard, restricted to the project's Admin or SuperAdmin, and shown only for packages that have been sent. Gestor users are directed to the dashboard for receipt registration.
+- User records now have an optional name field so the delivery recipient can be displayed with name, email, and phone. Existing accounts will need their names filled in through “Directorio de Usuarios y Accesos”.
+- The current GitHub Actions run and subsequent runs must pass before treating the implementation as verified. Local end-to-end validation remains required.
 
 ## Known verification boundary
 
