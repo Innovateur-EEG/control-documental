@@ -318,7 +318,12 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                             config_evidencia = ev.configuracion_json or {}
                             vigencia = config_evidencia.get("vigencia")
                             if vigencia not in (None, ""):
-                                st.caption(f"Vigencia: {vigencia}")
+                                vigencia_texto = (
+                                    f"{vigencia} días"
+                                    if isinstance(vigencia, (int, float)) and not isinstance(vigencia, bool)
+                                    else str(vigencia)
+                                )
+                                st.caption(f"Vigencia: {vigencia_texto}")
                             if doc_ev and doc_ev.estatus == "Cargado":
                                 fecha_carga = (
                                     doc_ev.fecha_actualizacion.strftime("%Y-%m-%d")
