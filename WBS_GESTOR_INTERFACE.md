@@ -70,7 +70,7 @@ Use a non-production test project and accounts. Do not validate destructive acti
 Changes pushed to `dev`; they are not yet accepted as locally validated.
 
 - Added `visible_if` example for a field conditional on `estado_civil == "Casado"`.
-- Evidence upload now uses a form submission to keep file selection and upload action together; it supports replacing an existing evidence file. Evidence configuration now supports a JSON object, including an optional `vigencia` value displayed in the Gestor view.
+- Evidence upload now uses a form submission to keep file selection and upload action together; it supports replacing an existing evidence file. Evidence configuration now supports a JSON object, including an optional `vigencia` value displayed in the Gestor view; numeric `vigencia` values are interpreted as days.
 - Added `tests/test_evidencias.py` for storage-failure rollback and success-path persistence, plus a GitHub Actions workflow for targeted tests and Python compilation.
 - Added an additive migration for `configuracion_evidencias.configuracion_json` and `usuarios.nombre`. Run `mise run db-migrate` before using the updated app against an existing database; the migration does not delete existing data.
 - Changed the user-facing tab to “Documentos Adjuntos” and package workflow terminology to “Paquete para firma”.
