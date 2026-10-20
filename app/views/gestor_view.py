@@ -300,7 +300,7 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                             st.rerun()
 
             # ==========================================
-            # TAB 2: EVIDENCIAS ADJUNTAS
+            # TAB 2: DOCUMENTOS ADJUNTOS
             # ==========================================
             with subtab_evid:
                 st.write("📎 **Documentos Adjuntos Requeridos**")
@@ -407,7 +407,7 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                                         st.error(f"No se pudo guardar la evidencia: {e}")
 
             # ==========================================
-            # TAB 3: PAQUETE DOCUMENTAL Y TRAZABILIDAD
+            # TAB 3: PAQUETE PARA FIRMA Y TRAZABILIDAD
             # ==========================================
             with subtab_paquete:
                 st.write("📄 **Gestión del Paquete para firma**")
@@ -627,6 +627,16 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                     if doc_exp.estatus in ["Enviado Físicamente", "Recibido", "Validado Original"]:
                         st.success(f"✅ Estatus físico actual: **{doc_exp.estatus}**")
                         st.write(f"**Método:** {meta.get('metodo', 'N/A')} | **Fecha de envío/entrega:** {meta.get('fecha_envio', 'N/A')}")
+                        if meta.get("metodo") in ("Entregado a responsable del proyecto", "Entregado a responsable"):
+                            responsables_guardados = meta.get("responsables_proyecto") or []
+                            if responsables_guardados:
+                                st.write("**Entregado a responsable del proyecto:**")
+                                for responsable in responsables_guardados:
+                                    st.write(
+                                        f"- {responsable.get('nombre') or 'Nombre no registrado'} | "
+                                        f"{responsable.get('email') or 'Correo no registrado'} | "
+                                        f"Tel. {responsable.get('telefono') or 'No registrado'}"
+                                    )
                         if meta.get('metodo') == "Enviado por paquetería":
                             st.write(f"**Paquetería:** {meta.get('empresa', 'N/A')} | **Guía:** {meta.get('guia', 'N/A')}")
                         if doc_exp.estatus == "Enviado Físicamente":
@@ -666,8 +676,21 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                             nuevos_meta = meta.copy()
                             nuevos_meta["metodo"] = metodo
                             nuevos_meta["fecha_envio"] = fecha_envio.strftime("%Y-%m-%d")
-                            if metodo == "Enviado por paquetería":
-                                nuevos_meta["empresa"] = empresa; nuevos_meta["guia"] = guia
+                            if metodo == "Entregado a responsable del proyecto":
+                                nuevos_meta["responsables_proyecto"] = [
+                                    {
+                                        "nombre": admin.nombre or "",
+                                        "email": admin.email,
+                                        "telefono": admin.telefono or "",
+                                    }
+                                    for admin in part.proyecto.admins
+                                ]
+                                nuevos_meta.pop("empresa", None)
+                                nuevos_meta.pop("guia", None)
+                            else:
+                                nuevos_meta.pop("responsables_proyecto", None)
+                                nuevos_meta["empresa"] = empresa
+                                nuevos_meta["guia"] = guia
                             doc_exp.metadata_json = nuevos_meta
                             doc_exp.estatus = "Enviado Físicamente"
                             flag_modified(doc_exp, "metadata_json")
