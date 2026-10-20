@@ -25,6 +25,11 @@ def migrate_schema(engine) -> bool:
     json_type = "JSONB" if engine.dialect.name == "postgresql" else "JSON"
     changed = False
     with engine.begin() as connection:
+        if inspector.has_table("usuarios"):
+            user_columns = {column["name"] for column in inspect(engine).get_columns("usuarios")}
+            if "nombre" not in user_columns:
+                connection.execute(text("ALTER TABLE usuarios ADD COLUMN nombre VARCHAR"))
+                changed = True
         for table_name in ("configuracion_campos", "configuracion_evidencias"):
             if not inspector.has_table(table_name):
                 if table_name == "configuracion_campos":
@@ -48,7 +53,7 @@ def migrate_schema(engine) -> bool:
 
 def main() -> None:
     if migrate_schema(get_engine()):
-        print("Migration complete: configuracion_campos.configuracion_json added.")
+        print("Migration complete: schema updated.")
     else:
         print("Database schema is already up to date.")
 
