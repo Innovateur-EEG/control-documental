@@ -13,7 +13,7 @@ from app.models.database import get_engine
 
 
 def migrate_schema(engine) -> bool:
-    """Add configuracion_json when missing. Return True only when changed."""
+    """Add JSON configuration columns when missing. Return True only when changed."""
     inspector = inspect(engine)
 
     if not inspector.has_table("configuracion_campos"):
@@ -22,20 +22,28 @@ def migrate_schema(engine) -> bool:
             "Run 'mise run db-init' first, or use 'mise run db-setup'."
         )
 
-    columns = {column["name"] for column in inspector.get_columns("configuracion_campos")}
-    if "configuracion_json" in columns:
-        return False
-
     json_type = "JSONB" if engine.dialect.name == "postgresql" else "JSON"
+    changed = False
     with engine.begin() as connection:
-        connection.execute(
-            text(
-                "ALTER TABLE configuracion_campos "
-                f"ADD COLUMN configuracion_json {json_type} "
-                "NOT NULL DEFAULT '{}' "
-            )
-        )
-    return True
+        for table_name in ("configuracion_campos", "configuracion_evidencias"):
+            if not inspector.has_table(table_name):
+                if table_name == "configuracion_campos":
+                    raise RuntimeError(
+                        "Table 'configuracion_campos' does not exist. "
+                        "Run 'mise run db-init' first, or use 'mise run db-setup'."
+                    )
+                continue
+            columns = {column["name"] for column in inspect(engine).get_columns(table_name)}
+            if "configuracion_json" not in columns:
+                connection.execute(
+                    text(
+                        f"ALTER TABLE {table_name} "
+                        f"ADD COLUMN configuracion_json {json_type} "
+                        "NOT NULL DEFAULT '{}' "
+                    )
+                )
+                changed = True
+    return changed
 
 
 def main() -> None:
