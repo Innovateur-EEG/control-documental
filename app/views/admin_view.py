@@ -691,7 +691,8 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                             for _, row in df_usr_edit.iterrows():
                                 val_id = row.get("ID")
                                 correo_u = str(row.get("Correo")).strip().lower()
-                                nombre_u = str(row.get("Nombre") or "").strip()
+                                nombre_raw = row.get("Nombre")
+                                nombre_u = "" if pd.isna(nombre_raw) else str(nombre_raw).strip()
                                 tel_u = row.get("Teléfono")
                                 rol_u = row.get("Rol") if pd.notna(row.get("Rol")) else "Usuario"
                                 
