@@ -40,6 +40,7 @@ class Usuario(Base):
     __tablename__ = 'usuarios'
     id = Column(Integer, primary_key=True)
     email = Column(String, unique=True, nullable=False)
+    nombre = Column(String, nullable=True)
     password_hash = Column(String, nullable=True) 
     telefono = Column(String, nullable=True)
     tipo_usuario = Column(String, nullable=False) 
