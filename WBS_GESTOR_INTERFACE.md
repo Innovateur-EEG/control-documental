@@ -50,7 +50,9 @@ Use a non-production test project and accounts. Do not validate destructive acti
 ## Latest manual UX results (2026-10-19)
 
 - Items 1–4 passed, including the prior project-scope checks. The intermittent blank-screen issue has not recurred; continue monitoring.
-- Items 5 and 6 remain pending; the instructions above describe how to validate them safely.
+- Items 5 and 6 were pending before the latest changes. Item 5 now has an explicit JSON example in the chat; item 6 has an automated failure-path test. The manual persistence and successful-upload checks still need local validation.
+- The user accepted the prior outcomes for items 7–9; the latest requested labels and package workflow adjustments are implemented but still need local UX verification.
+- Items 10 and 11 remain pending for the user's final validation.
 
 ## Additional UX requirements
 
