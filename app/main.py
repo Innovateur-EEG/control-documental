@@ -55,11 +55,17 @@ def dashboard_principal():
     finally:
         db.close()
 
+@st.cache_resource
+def ensure_schema():
+    """Run additive schema migrations once per Streamlit server process."""
+    return migrate_schema(engine)
+
+
 def main():
     st.title("Sistema de Control Documental")
     # Bring older databases up to the ORM schema before the login query runs.
     try:
-        migrate_schema(engine)
+        ensure_schema()
     except Exception as exc:
         st.error(f"No se pudo verificar/actualizar el esquema de la base de datos: {exc}")
         st.info("Revise la conexión y ejecute mise run db-migrate si el problema persiste.")
