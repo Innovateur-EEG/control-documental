@@ -655,13 +655,14 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                         datos_usr.append({
                             "Sel": False,
                             "ID": u.id,
+                            "Nombre": u.nombre or "",
                             "Correo": u.email,
                             "Teléfono": u.telefono or "",
                             "Estatus Contraseña": estatus_pwd,
                             "Rol": u.tipo_usuario
                         })
                         
-                    df_usr = pd.DataFrame(datos_usr) if datos_usr else pd.DataFrame(columns=["Sel", "ID", "Correo", "Teléfono", "Estatus Contraseña", "Rol"])
+                    df_usr = pd.DataFrame(datos_usr) if datos_usr else pd.DataFrame(columns=["Sel", "ID", "Nombre", "Correo", "Teléfono", "Estatus Contraseña", "Rol"])
                     
                     # Para permitir inline-creation, el correo no debe estar en la lista de bloqueados
                     cols_usr_readonly = ["ID", "Estatus Contraseña"]
@@ -677,6 +678,7 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                         column_config={
                             "Sel": st.column_config.CheckboxColumn("Seleccionar", default=False),
                             "ID": None,
+                            "Nombre": st.column_config.TextColumn("Nombre del responsable"),
                             "Correo": st.column_config.TextColumn("Correo (Editable)", required=True),
                             "Rol": st.column_config.SelectboxColumn("Rol", options=["Usuario", "Admin", "SuperAdmin"], default="Usuario")
                         },
@@ -689,6 +691,7 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                             for _, row in df_usr_edit.iterrows():
                                 val_id = row.get("ID")
                                 correo_u = str(row.get("Correo")).strip().lower()
+                                nombre_u = str(row.get("Nombre") or "").strip()
                                 tel_u = row.get("Teléfono")
                                 rol_u = row.get("Rol") if pd.notna(row.get("Rol")) else "Usuario"
                                 
@@ -701,6 +704,7 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                                             if u_obj.email != correo_u:
                                                 if not db.query(Usuario).filter(Usuario.email == correo_u).first():
                                                     u_obj.email = correo_u
+                                            u_obj.nombre = nombre_u or None
                                             u_obj.telefono = tel_u
                                             if is_super:
                                                 u_obj.tipo_usuario = rol_u
@@ -709,6 +713,7 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                                         if not db.query(Usuario).filter(Usuario.email == correo_u).first():
                                             nuevo_u = Usuario(
                                                 email=correo_u,
+                                                nombre=nombre_u or None,
                                                 telefono=tel_u,
                                                 password_hash=generar_hash("Temporal123!"),
                                                 tipo_usuario=rol_u if is_super else "Usuario",
