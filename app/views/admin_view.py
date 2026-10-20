@@ -7,7 +7,7 @@ import unicodedata
 import uuid
 from app.models.database import Usuario, Proyecto, Persona, Catalogo, Participacion, JerarquiaParticipacion, DocumentoExpediente, PlantillaFormato, ConfiguracionCampos, ConfiguracionEvidencia, UsuarioPersonaGestor, supabase_client
 from app.utils.auth import generar_hash
-from app.utils.gestor import descendant_participation_ids
+from app.utils.gestor import EDIT_PERMISSION, descendant_participation_ids, effective_permission
 from app.utils.dynamic_fields import SUPPORTED_FIELD_TYPES, validate_field_config
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -113,30 +113,49 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                     db.commit()
                     st.rerun()
 
-        # Keep the status dashboard global, but gate individual records and exports
-        # on explicit person-level access (direct assignment or inherited hierarchy).
+        # Keep the status dashboard global, but expose individual details and exports
+        # only when the user has effective read/write permission for that participation.
         if is_super:
             participaciones_revision = participaciones
         else:
             asignaciones_directas = list(user_actual.personas_asignadas) if user_actual else []
-            personas_autorizadas = {asig.persona_id for asig in asignaciones_directas}
-            if personas_autorizadas and mis_proy_ids:
+            direct_permissions = {
+                assignment.persona_id: assignment.nivel_permiso
+                for assignment in asignaciones_directas
+            }
+            personas_asignadas = set(direct_permissions)
+            if personas_asignadas and mis_proy_ids:
                 participaciones_directas = db.query(Participacion).filter(
-                    Participacion.persona_id.in_(personas_autorizadas),
+                    Participacion.persona_id.in_(personas_asignadas),
                     Participacion.proyecto_id.in_(mis_proy_ids),
                 ).all()
                 raices_ids = [part.id for part in participaciones_directas]
                 jerarquias = db.query(JerarquiaParticipacion).all()
+                hierarchy_edges = [(rel.padre_id, rel.hijo_id) for rel in jerarquias]
                 descendientes_ids = descendant_participation_ids(
-                    raices_ids,
-                    [(rel.padre_id, rel.hijo_id) for rel in jerarquias],
+                    raices_ids, hierarchy_edges
                 )
-                query_revision = db.query(Participacion).filter(
-                    Participacion.proyecto_id.in_(mis_proy_ids)
-                )
-                participaciones_revision = query_revision.filter(
-                    Participacion.id.in_(set(raices_ids) | descendientes_ids)
+                candidatos = db.query(Participacion).filter(
+                    Participacion.proyecto_id.in_(mis_proy_ids),
+                    Participacion.id.in_(set(raices_ids) | descendientes_ids),
                 ).all()
+
+                parents_by_child = {}
+                for parent_id, child_id in hierarchy_edges:
+                    parents_by_child.setdefault(child_id, []).append(parent_id)
+                participation_persona_ids = {
+                    part.id: part.persona_id for part in participaciones
+                }
+                participaciones_revision = [
+                    part for part in candidatos
+                    if effective_permission(
+                        part.id,
+                        part.persona_id,
+                        direct_permissions,
+                        parents_by_child,
+                        participation_persona_ids,
+                    ) == EDIT_PERMISSION
+                ]
             else:
                 participaciones_revision = []
 
