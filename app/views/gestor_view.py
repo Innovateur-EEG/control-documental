@@ -10,6 +10,7 @@ from app.models.database import Participacion, JerarquiaParticipacion, Documento
 from app.utils.gestor import EDIT_PERMISSION, READ_ONLY_PERMISSION, descendant_participation_ids, effective_permission
 from app.utils.documentos import procesar_excel, procesar_word, convertir_a_pdf, fusionar_pdfs
 from app.utils.dynamic_fields import checkbox_value, dependent_options, field_config, field_is_visible, merge_capture_values, number_widget_options, text_widget_options, validate_submitted_value
+from app.utils.evidencias import upload_then_persist
 
 def limpiar_nombre_archivo(nombre: str) -> str:
     import unicodedata, re
@@ -342,24 +343,41 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                             else:
                                 st.warning("Pendiente de carga")
                         with col_ev2:
-                            if not doc_ev or doc_ev.estatus != "Cargado":
-                                archivo_ev = st.file_uploader("Subir Archivo (.pdf, .jpg, .png)", type=["pdf", "jpg", "jpeg", "png"], key=f"up_ev_{part.id}_{ev.id}", label_visibility="collapsed", disabled=es_solo_lectura)
-                                if archivo_ev:
-                                    if st.button("Guardar Evidencia", key=f"btn_ev_{part.id}_{ev.id}", disabled=es_solo_lectura):
-                                        ts = int(datetime.datetime.now().timestamp())
-                                        proy_limpio = limpiar_nombre_archivo(part.proyecto.nombre)
-                                        nombre_limpio = limpiar_nombre_archivo(ev.nombre_evidencia)
-                                        pers_limpio = limpiar_nombre_archivo(part.persona.razon_social_nombre)
-                                        ext = os.path.splitext(archivo_ev.name)[1].lower()
-                                        ruta_ev = f"evidencias/{proy_limpio}-{pers_limpio}-{nombre_limpio}-{ts}{ext}"
-                                        try:
-                                            if supabase_client is None:
-                                                raise RuntimeError("Supabase Storage no está configurado.")
+                            upload_form_key = f"form_ev_{part.id}_{ev.id}"
+                            with st.form(upload_form_key, clear_on_submit=True):
+                                archivo_ev = st.file_uploader(
+                                    "Subir o reemplazar archivo (.pdf, .jpg, .png)",
+                                    type=["pdf", "jpg", "jpeg", "png"],
+                                    key=f"up_ev_{part.id}_{ev.id}",
+                                    label_visibility="collapsed",
+                                    disabled=es_solo_lectura,
+                                )
+                                guardar_evidencia = st.form_submit_button(
+                                    "Cargar/Actualizar evidencia",
+                                    disabled=es_solo_lectura,
+                                )
+                            if guardar_evidencia:
+                                if not archivo_ev:
+                                    st.warning("Selecciona un archivo antes de continuar.")
+                                else:
+                                    ts = int(datetime.datetime.now().timestamp() * 1000)
+                                    proy_limpio = limpiar_nombre_archivo(part.proyecto.nombre)
+                                    nombre_limpio = limpiar_nombre_archivo(ev.nombre_evidencia)
+                                    pers_limpio = limpiar_nombre_archivo(part.persona.razon_social_nombre)
+                                    ext = os.path.splitext(archivo_ev.name)[1].lower()
+                                    ruta_ev = f"evidencias/{proy_limpio}-{pers_limpio}-{nombre_limpio}-{ts}{ext}"
+                                    try:
+                                        if supabase_client is None:
+                                            raise RuntimeError("Supabase Storage no está configurado.")
+
+                                        def _upload_evidencia():
                                             supabase_client.storage.from_("expedientes").upload(
                                                 file=archivo_ev.getvalue(),
                                                 path=ruta_ev,
                                                 file_options={"content-type": archivo_ev.type, "x-upsert": "true"},
                                             )
+
+                                        def _persist_evidencia():
                                             if not doc_ev:
                                                 db.add(DocumentoExpediente(
                                                     participacion_id=part.id,
@@ -367,16 +385,22 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                                                     tipo_documento=ev.nombre_evidencia,
                                                     estatus="Cargado",
                                                     ruta_archivo=ruta_ev,
+                                                    metadata_json={"nombre_original": archivo_ev.name},
                                                 ))
                                             else:
                                                 doc_ev.estatus = "Cargado"
                                                 doc_ev.ruta_archivo = ruta_ev
+                                                metadata_ev = dict(doc_ev.metadata_json or {})
+                                                metadata_ev["nombre_original"] = archivo_ev.name
+                                                doc_ev.metadata_json = metadata_ev
+                                                flag_modified(doc_ev, "metadata_json")
                                             db.commit()
-                                            st.success("Evidencia cargada y registrada.")
-                                            st.rerun()
-                                        except Exception as e:
-                                            db.rollback()
-                                            st.error(f"No se pudo guardar la evidencia: {e}")
+
+                                        upload_then_persist(_upload_evidencia, _persist_evidencia, db.rollback)
+                                        st.success("Evidencia cargada y registrada.")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"No se pudo guardar la evidencia: {e}")
 
             # ==========================================
             # TAB 3: PAQUETE DOCUMENTAL Y TRAZABILIDAD
