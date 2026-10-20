@@ -14,7 +14,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy.orm import Session
 
-from app.models.database import ConfiguracionCampos, ConfiguracionEvidencia, SessionLocal
+from app.models.database import ConfiguracionCampos, ConfiguracionEvidencia, SessionLocal, engine
+from scripts.migrate_db import migrate_schema
 
 
 FIELD_DEFINITIONS: list[dict[str, Any]] = [
@@ -209,6 +210,11 @@ def seed_json_tests(session: Session) -> dict[str, int]:
 
 
 def main() -> None:
+    # Apply additive schema changes before querying models. This keeps the
+    # one-command test workflow usable against databases that predate JSON config.
+    if migrate_schema(engine):
+        print("Database schema updated before seeding JSON test data.")
+
     session = SessionLocal()
     try:
         result = seed_json_tests(session)
