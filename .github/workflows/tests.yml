@@ -18,6 +18,8 @@ jobs:
           python-version: "3.12"
       - name: Install test runner
         run: python -m pip install --upgrade pip pytest
+      - name: Compile application and migration scripts
+        run: python -m compileall -q app scripts
       - name: Run isolated unit tests
         run: >-
           python -m pytest -q
