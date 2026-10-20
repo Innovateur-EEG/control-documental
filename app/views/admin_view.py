@@ -817,119 +817,142 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                             else:
                                 st.error("El nombre, los roles y el archivo son obligatorios.")
                                 
-                # Unified editable table: one row per signature assignment.
+                # Template properties are edited once per document; signature assignments are separate rows.
                 plantillas = db.query(PlantillaFormato).order_by(PlantillaFormato.id).all()
                 if plantillas:
-                    st.write("**Configuración de Firmas por Documento:**")
-                    st.caption("Cada fila define una firma. Edite roles, número de páginas y firma directamente; use + para agregar una firma y elimine filas desde la tabla.")
-                    etiqueta_a_plantilla = {
-                        f"{tpl.id} — {tpl.nombre}": tpl for tpl in plantillas
-                    }
+                    st.write("**Configuración de plantillas:**")
+                    st.caption("Edite nombre, roles aplicables y páginas totales una sola vez por documento.")
+                    etiqueta_original = {f"{tpl.id} — {tpl.nombre}": tpl for tpl in plantillas}
+                    df_plantillas = pd.DataFrame([
+                        {
+                            "ID": tpl.id,
+                            "Nombre": tpl.nombre,
+                            "Roles (coma)": ", ".join(tpl.roles_aplica or []),
+                            "Páginas totales": tpl.paginas_totales,
+                        }
+                        for tpl in plantillas
+                    ], columns=["ID", "Nombre", "Roles (coma)", "Páginas totales"])
+                    df_plantillas_editado = st.data_editor(
+                        df_plantillas,
+                        hide_index=True,
+                        use_container_width=True,
+                        key="editor_propiedades_plantillas",
+                        disabled=["ID"],
+                        column_config={
+                            "ID": st.column_config.NumberColumn("ID", disabled=True),
+                            "Nombre": st.column_config.TextColumn("Nombre", required=True),
+                            "Roles (coma)": st.column_config.TextColumn("Roles aplicables (separados por coma)", required=True),
+                            "Páginas totales": st.column_config.NumberColumn("Páginas totales", min_value=1, step=1, required=True),
+                        },
+                    )
+
+                    st.write("**Firmas por documento:**")
+                    st.caption("Cada fila representa una firma. Agregue o elimine filas aquí; eliminar todas las filas de un documento elimina todas sus firmas.")
                     filas_firmas = []
                     for tpl in plantillas:
-                        firmas = tpl.firmas_json or [{}]
-                        for firma in firmas:
+                        for firma in (tpl.firmas_json or []):
                             filas_firmas.append({
-                                "ID": tpl.id,
                                 "Documento": f"{tpl.id} — {tpl.nombre}",
-                                "Roles (coma)": ", ".join(tpl.roles_aplica or []),
-                                "Páginas documento": tpl.paginas_totales,
                                 "Página firma": firma.get("pag_formato"),
                                 "Tipo de firma": firma.get("tipo_firma"),
                             })
                     df_firmas = pd.DataFrame(filas_firmas, columns=[
-                        "ID", "Documento", "Roles (coma)", "Páginas documento",
-                        "Página firma", "Tipo de firma"
+                        "Documento", "Página firma", "Tipo de firma"
                     ])
                     df_firmas_editado = st.data_editor(
                         df_firmas,
                         num_rows="dynamic",
                         hide_index=True,
                         use_container_width=True,
-                        key="editor_firmas_documentos",
-                        disabled=["ID"],
+                        key="editor_firmas_por_documento",
                         column_config={
-                            "ID": st.column_config.NumberColumn("ID", disabled=True),
                             "Documento": st.column_config.SelectboxColumn(
-                                "Documento", options=list(etiqueta_a_plantilla), required=True
-                            ),
-                            "Roles (coma)": st.column_config.TextColumn("Roles (separados por coma)", required=True),
-                            "Páginas documento": st.column_config.NumberColumn(
-                                "Páginas documento", min_value=1, step=1, required=True
+                                "Documento", options=list(etiqueta_original), required=True
                             ),
                             "Página firma": st.column_config.NumberColumn(
-                                "Página firma", min_value=1, step=1
+                                "Página firma", min_value=1, step=1, required=True
                             ),
                             "Tipo de firma": st.column_config.SelectboxColumn(
                                 "Tipo de firma",
                                 options=["Firma Simple", "Nombre y Firma", "Nombre, Firma y Huella", "Solo Rúbrica"],
+                                required=True,
                             ),
                         },
                     )
+
                     if st.button("💾 Guardar configuración de firmas", key="guardar_firmas_tabla"):
                         try:
-                            agrupadas = {}
+                            propiedades = {}
+                            nombres_vistos = set()
+                            for _, fila in df_plantillas_editado.iterrows():
+                                tpl_id = int(fila["ID"])
+                                nombre = str(fila.get("Nombre") or "").strip()
+                                if not nombre:
+                                    raise ValueError("El nombre del documento es obligatorio.")
+                                if nombre.casefold() in nombres_vistos:
+                                    raise ValueError(f"El nombre de plantilla '{nombre}' está duplicado.")
+                                nombres_vistos.add(nombre.casefold())
+                                roles_raw = fila.get("Roles (coma)")
+                                roles = [
+                                    rol.strip() for rol in str(roles_raw or "").split(",") if rol.strip()
+                                ]
+                                paginas_raw = fila.get("Páginas totales")
+                                if pd.isna(paginas_raw) or int(paginas_raw) < 1:
+                                    raise ValueError(f"El documento '{nombre}' debe tener al menos una página.")
+                                propiedades[tpl_id] = {
+                                    "nombre": nombre,
+                                    "roles": roles,
+                                    "paginas": int(paginas_raw),
+                                }
+
+                            firmas_por_tpl = {tpl.id: [] for tpl in plantillas}
                             for _, fila in df_firmas_editado.iterrows():
                                 etiqueta = fila.get("Documento")
-                                tpl = etiqueta_a_plantilla.get(etiqueta)
+                                tpl = etiqueta_original.get(etiqueta)
                                 if tpl is None:
-                                    continue
-                                grupo = agrupadas.setdefault(tpl.id, {
-                                    "roles": None, "paginas": None, "firmas": []
+                                    raise ValueError("Seleccione un documento válido para cada firma.")
+                                pagina_raw = fila.get("Página firma")
+                                tipo_raw = fila.get("Tipo de firma")
+                                if pd.isna(pagina_raw) or pd.isna(tipo_raw) or not str(tipo_raw).strip():
+                                    raise ValueError(f"Complete la página y el tipo de firma para '{tpl.nombre}'.")
+                                pagina = int(pagina_raw)
+                                paginas_doc = propiedades[tpl.id]["paginas"]
+                                if pagina < 1 or pagina > paginas_doc:
+                                    raise ValueError(
+                                        f"La página de firma de '{propiedades[tpl.id]['nombre']}' debe estar entre 1 y {paginas_doc}."
+                                    )
+                                firmas_por_tpl[tpl.id].append({
+                                    "pag_formato": pagina,
+                                    "tipo_firma": str(tipo_raw),
                                 })
-                                roles_raw = fila.get("Roles (coma)")
-                                if pd.notna(roles_raw):
-                                    grupo["roles"] = [
-                                        rol.strip() for rol in str(roles_raw).split(",") if rol.strip()
-                                    ]
-                                paginas_raw = fila.get("Páginas documento")
-                                if pd.notna(paginas_raw):
-                                    paginas = int(paginas_raw)
-                                    if paginas < 1:
-                                        raise ValueError(f"El documento '{tpl.nombre}' debe tener al menos una página.")
-                                    grupo["paginas"] = paginas
-                                pagina_firma = fila.get("Página firma")
-                                tipo_firma = fila.get("Tipo de firma")
-                                if pd.notna(pagina_firma) and pd.notna(tipo_firma) and str(tipo_firma).strip():
-                                    pagina_firma = int(pagina_firma)
-                                    paginas_doc = grupo["paginas"] or tpl.paginas_totales
-                                    if pagina_firma < 1 or pagina_firma > paginas_doc:
-                                        raise ValueError(
-                                            f"La página de firma de '{tpl.nombre}' debe estar entre 1 y {paginas_doc}."
-                                        )
-                                    grupo["firmas"].append({
-                                        "pag_formato": pagina_firma,
-                                        "tipo_firma": str(tipo_firma),
-                                    })
+
                             for tpl in plantillas:
-                                grupo = agrupadas.get(tpl.id)
-                                if not grupo:
-                                    continue
-                                if grupo["roles"] is not None:
-                                    tpl.roles_aplica = grupo["roles"]
-                                if grupo["paginas"] is not None:
-                                    tpl.paginas_totales = grupo["paginas"]
-                                tpl.firmas_json = grupo["firmas"]
+                                props = propiedades[tpl.id]
+                                tpl.nombre = props["nombre"]
+                                tpl.roles_aplica = props["roles"]
+                                tpl.paginas_totales = props["paginas"]
+                                # Every template is written, including empty lists, so removing all rows clears signatures.
+                                tpl.firmas_json = firmas_por_tpl[tpl.id]
                             db.commit()
-                            st.success("Configuración de firmas guardada.")
+                            st.success("Configuración de plantillas y firmas guardada.")
                             st.rerun()
-                        except (ValueError, TypeError) as exc:
+                        except (ValueError, TypeError, KeyError) as exc:
                             db.rollback()
                             st.error(str(exc))
+
                     col_delete, _ = st.columns([2, 5])
                     with col_delete:
                         plantilla_eliminar = st.selectbox(
                             "Plantilla para eliminar",
-                            options=list(etiqueta_a_plantilla),
+                            options=list(etiqueta_original),
                             key="plantilla_firmas_eliminar",
                         )
                         if st.button("🗑️ Eliminar plantilla seleccionada", key="eliminar_plantilla_firmas"):
-                            db.delete(etiqueta_a_plantilla[plantilla_eliminar])
+                            db.delete(etiqueta_original[plantilla_eliminar])
                             db.commit()
                             st.success("Plantilla eliminada.")
                             st.rerun()
 
-            # =========================================================
             # --- VARIABLES Y EVIDENCIAS: TABLAS CRUD ---
             # =========================================================
             with sub_vars:
