@@ -646,11 +646,17 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                             st.rerun()
                     elif doc_exp.estatus == "Firmado y Cargado":
                         metodo = st.radio("Método de entrega", ["Entregado a responsable del proyecto", "Enviado por paquetería"], key=f"metodo_{part.id}", disabled=es_solo_lectura)
-                        admins_proyecto = [admin.email for admin in part.proyecto.admins]
-                        admin_texto = ", ".join(admins_proyecto) if admins_proyecto else "Administrador de Proyecto (Pendiente)"
+                        admins_proyecto = [
+                            f"{admin.nombre or 'Nombre no registrado'} | {admin.email} | Tel. {admin.telefono or 'No registrado'}"
+                            for admin in part.proyecto.admins
+                        ]
+                        admin_texto = "; ".join(admins_proyecto) if admins_proyecto else "Responsable de proyecto pendiente de asignación"
                         empresa, guia = "", ""
                         if metodo == "Entregado a responsable del proyecto":
-                            st.info(f"👤 Entregar a: **{admin_texto}**")
+                            st.info(
+                                f"👤 Entregar al responsable del proyecto **{part.proyecto.nombre}**: "
+                                f"{admin_texto}"
+                            )
                         else:
                             col_a, col_b = st.columns(2)
                             empresa = col_a.text_input("Empresa de paquetería", key=f"emp_{part.id}", disabled=es_solo_lectura)
