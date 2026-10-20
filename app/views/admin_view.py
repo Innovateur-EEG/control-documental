@@ -75,6 +75,43 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
         # ... (Código existente donde se renderiza la tabla del tablero de control) ...
             st.dataframe(df_tablero.style.map(color_estatus, subset=['Estatus Documental']), hide_index=True, use_container_width=True)
 
+            # Receipt can only be recorded by the project's Admin (or SuperAdmin)
+            # and only after the signed package has been physically sent.
+            st.markdown("#### Recepción de paquetes enviados")
+            paquetes_enviados = []
+            for part_receipt in participaciones:
+                doc_receipt = db.query(DocumentoExpediente).filter(
+                    DocumentoExpediente.participacion_id == part_receipt.id,
+                    DocumentoExpediente.tipo_documento == "Paquete Unificado",
+                ).first()
+                if not doc_receipt or doc_receipt.estatus not in ("Enviado Físicamente", "Recibido"):
+                    continue
+                es_responsable = is_super or any(
+                    admin.id == user_actual.id for admin in part_receipt.proyecto.admins
+                )
+                if es_responsable:
+                    paquetes_enviados.append((part_receipt, doc_receipt))
+
+            if not paquetes_enviados:
+                st.caption("No hay paquetes enviados pendientes de recepción para los proyectos que administras.")
+            for part_receipt, doc_receipt in paquetes_enviados:
+                col_info_recepcion, col_control_recepcion = st.columns([3, 2])
+                col_info_recepcion.write(
+                    f"**{part_receipt.proyecto.nombre}** — "
+                    f"{part_receipt.persona.razon_social_nombre}"
+                )
+                estado_recepcion = col_control_recepcion.selectbox(
+                    "Registrar recepción",
+                    options=["Pendiente de recepción", "Recibido"],
+                    index=1 if doc_receipt.estatus == "Recibido" else 0,
+                    key=f"dashboard_receipt_{doc_receipt.id}",
+                    disabled=doc_receipt.estatus == "Recibido",
+                )
+                if estado_recepcion == "Recibido" and doc_receipt.estatus == "Enviado Físicamente":
+                    doc_receipt.estatus = "Recibido"
+                    db.commit()
+                    st.rerun()
+
         # Admins are restricted to participations in their assigned projects for
         # individual review and export. The progress dashboard above stays global.
         participaciones_revision = (
