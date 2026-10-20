@@ -7,6 +7,7 @@ import unicodedata
 import uuid
 from app.models.database import Usuario, Proyecto, Persona, Catalogo, Participacion, JerarquiaParticipacion, DocumentoExpediente, PlantillaFormato, ConfiguracionCampos, ConfiguracionEvidencia, UsuarioPersonaGestor, supabase_client
 from app.utils.auth import generar_hash
+from app.utils.gestor import descendant_participation_ids
 from app.utils.dynamic_fields import SUPPORTED_FIELD_TYPES, validate_field_config
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -112,15 +113,32 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                     db.commit()
                     st.rerun()
 
-        # Admins are restricted to participations in their assigned projects for
-        # individual review and export. The progress dashboard above stays global.
-        participaciones_revision = (
-            participaciones
-            if is_super
-            else db.query(Participacion).filter(
-                Participacion.proyecto_id.in_(mis_proy_ids)
-            ).all()
-        )
+        # Keep the status dashboard global, but gate individual records and exports
+        # on explicit person-level access (direct assignment or inherited hierarchy).
+        if is_super:
+            participaciones_revision = participaciones
+        else:
+            asignaciones_directas = list(user_actual.personas_asignadas) if user_actual else []
+            personas_autorizadas = {asig.persona_id for asig in asignaciones_directas}
+            if personas_autorizadas and mis_proy_ids:
+                participaciones_directas = db.query(Participacion).filter(
+                    Participacion.persona_id.in_(personas_autorizadas),
+                    Participacion.proyecto_id.in_(mis_proy_ids),
+                ).all()
+                raices_ids = [part.id for part in participaciones_directas]
+                jerarquias = db.query(JerarquiaParticipacion).all()
+                descendientes_ids = descendant_participation_ids(
+                    raices_ids,
+                    [(rel.padre_id, rel.hijo_id) for rel in jerarquias],
+                )
+                query_revision = db.query(Participacion).filter(
+                    Participacion.proyecto_id.in_(mis_proy_ids)
+                )
+                participaciones_revision = query_revision.filter(
+                    Participacion.id.in_(set(raices_ids) | descendientes_ids)
+                ).all()
+            else:
+                participaciones_revision = []
 
         # --- NUEVA SECCIÓN WBS 3.4.2: REVISIÓN DE EXPEDIENTES Y DESCARGA ---
         st.divider()
