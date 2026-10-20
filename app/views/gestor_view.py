@@ -630,10 +630,7 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                         if meta.get('metodo') == "Enviado por paquetería":
                             st.write(f"**Paquetería:** {meta.get('empresa', 'N/A')} | **Guía:** {meta.get('guia', 'N/A')}")
                         if doc_exp.estatus == "Enviado Físicamente":
-                            if st.button("Registrar recepción", key=f"btn_received_{part.id}", disabled=es_solo_lectura):
-                                doc_exp.estatus = "Recibido"
-                                db.commit()
-                                st.rerun()
+                            st.info("El responsable del proyecto debe registrar la recepción desde el Tablero de Avance Documental.")
                         elif doc_exp.estatus == "Recibido":
                             if st.button("Validar documento original", key=f"btn_validate_original_{part.id}", disabled=es_solo_lectura):
                                 doc_exp.estatus = "Validado Original"
