@@ -8,6 +8,7 @@ def test_migrate_schema_adds_missing_json_configuration_columns():
     engine = create_engine("sqlite://")
     try:
         with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE usuarios (id INTEGER PRIMARY KEY, email VARCHAR)"))
             connection.execute(text(
                 "CREATE TABLE configuracion_campos "
                 "(id INTEGER PRIMARY KEY, nombre_mostrar VARCHAR)"
@@ -19,6 +20,8 @@ def test_migrate_schema_adds_missing_json_configuration_columns():
             ))
 
         assert migrate_schema(engine) is True
+
+        assert "nombre" in {column["name"] for column in inspect(engine).get_columns("usuarios")}
 
         for table_name in ("configuracion_campos", "configuracion_evidencias"):
             columns = {column["name"] for column in inspect(engine).get_columns(table_name)}

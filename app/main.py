@@ -5,7 +5,8 @@ st.set_page_config(page_title="Control Documental", page_icon="📄", layout="ce
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.models.database import get_db_session, Usuario, Proyecto
+from app.models.database import engine, get_db_session, Usuario, Proyecto
+from scripts.migrate_db import migrate_schema
 from app.views.auth_view import render_login, logout
 from app.views.gestor_view import render_gestor
 from app.views.admin_view import render_admin
@@ -56,6 +57,13 @@ def dashboard_principal():
 
 def main():
     st.title("Sistema de Control Documental")
+    # Bring older databases up to the ORM schema before the login query runs.
+    try:
+        migrate_schema(engine)
+    except Exception as exc:
+        st.error(f"No se pudo verificar/actualizar el esquema de la base de datos: {exc}")
+        st.info("Revise la conexión y ejecute mise run db-migrate si el problema persiste.")
+        st.stop()
     if 'autenticado' not in st.session_state:
         st.session_state['autenticado'] = False
 

@@ -25,9 +25,13 @@ def migrate_schema(engine) -> bool:
     changed = False
     with engine.begin() as connection:
         if inspector.has_table("usuarios"):
-            user_columns = {column["name"] for column in inspect(engine).get_columns("usuarios")}
-            if "nombre" not in user_columns:
+            user_columns = {column["name"] for column in inspect(connection).get_columns("usuarios")}
+            if engine.dialect.name == "postgresql":
+                connection.execute(text("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS nombre VARCHAR"))
+            elif "nombre" not in user_columns:
                 connection.execute(text("ALTER TABLE usuarios ADD COLUMN nombre VARCHAR"))
+            connection.execute(text("SELECT nombre FROM usuarios LIMIT 0"))
+            if "nombre" not in user_columns:
                 changed = True
 
         for table_name in ("configuracion_campos", "configuracion_evidencias"):

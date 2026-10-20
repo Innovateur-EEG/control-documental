@@ -30,10 +30,11 @@ def procesar_excel(file_bytes: bytes, context: dict) -> bytes:
 def procesar_word(file_bytes: bytes, context: dict) -> bytes:
     """Renderiza la plantilla Word usando Jinja2"""
     doc = DocxTemplate(io.BytesIO(file_bytes))
-    doc.jinja_env.filters["mark"] = mark_filter
-    doc.jinja_env.filters["mark_not"] = mark_not_filter
-    doc.jinja_env.filters["prefix"] = prefix_filter
-    doc.render(context)
+    env = Environment()
+    env.filters["mark"] = mark_filter
+    env.filters["mark_not"] = mark_not_filter
+    env.filters["prefix"] = prefix_filter
+    doc.render(context, jinja_env=env)
     out = io.BytesIO()
     doc.save(out)
     return out.getvalue()
