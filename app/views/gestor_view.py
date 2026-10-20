@@ -91,7 +91,7 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                 c_head2.success("✏️ Edición Completa")
 
             # --- SUB-PESTAÑAS DE EXPEDIENTE ---
-            subtab_form, subtab_evid, subtab_paquete = st.tabs(["📝 Formulario de Captura", "📎 Evidencias Adjuntas", "📦 Paquete Documental"])
+            subtab_form, subtab_evid, subtab_paquete = st.tabs(["📝 Formulario de Captura", "📎 Documentos Adjuntos", "📦 Paquete para firma"])
             
             # ==========================================
             # TAB 1: FORMULARIO DINÁMICO
@@ -303,7 +303,7 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
             # TAB 2: EVIDENCIAS ADJUNTAS
             # ==========================================
             with subtab_evid:
-                st.write("📎 **Evidencias Adjuntas Requeridas**")
+                st.write("📎 **Documentos Adjuntos Requeridos**")
                 todas_evidencias = db.query(ConfiguracionEvidencia).all()
                 evidencias_aplicables = [e for e in todas_evidencias if e.tipo_persona in ["Ambas", part.persona.tipo] and (not e.roles_aplica or part.rol in e.roles_aplica)]
                 
@@ -315,6 +315,10 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                         col_ev1, col_ev2 = st.columns([1, 1])
                         with col_ev1:
                             st.markdown(f"**{ev.nombre_evidencia}**")
+                            config_evidencia = ev.configuracion_json or {}
+                            vigencia = config_evidencia.get("vigencia")
+                            if vigencia not in (None, ""):
+                                st.caption(f"Vigencia: {vigencia}")
                             if doc_ev and doc_ev.estatus == "Cargado":
                                 fecha_carga = (
                                     doc_ev.fecha_actualizacion.strftime("%Y-%m-%d")
@@ -406,7 +410,7 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
             # TAB 3: PAQUETE DOCUMENTAL Y TRAZABILIDAD
             # ==========================================
             with subtab_paquete:
-                st.write("📄 **Gestión del Paquete Documental**")
+                st.write("📄 **Gestión del Paquete para firma**")
                 
                 doc_exp = db.query(DocumentoExpediente).filter_by(
                     participacion_id=part.id,
@@ -423,10 +427,23 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                     if not plantillas_aplicables:
                         st.error("No hay formatos configurados para este rol.")
                     else:
+                        if doc_exp:
+                            st.warning(
+                                "Volver a generar el paquete reemplazará el PDF anterior y eliminará "
+                                "el paquete firmado y los datos de entrega/recepción asociados."
+                            )
+                            confirmar_regeneracion = st.checkbox(
+                                "Confirmo que quiero reemplazar el paquete y borrar su evidencia de entrega.",
+                                key=f"confirm_regen_{part.id}",
+                                disabled=es_solo_lectura,
+                            )
+                        else:
+                            confirmar_regeneracion = True
+
                         if st.button(
-                            "Generar Paquete PDF Unificado",
+                            "Volver a generar paquete..." if doc_exp else "Generar Paquete PDF Unificado",
                             key=f"btn_gen_{part.id}",
-                            disabled=es_solo_lectura,
+                            disabled=es_solo_lectura or not confirmar_regeneracion,
                         ):
                             if supabase_client is None:
                                 st.error("Supabase Storage no está configurado; no se puede generar el paquete.")
@@ -470,7 +487,21 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                                             db.add(doc_exp)
                                         else:
                                             metadata = dict(doc_exp.metadata_json or {})
+                                            ruta_firmado_anterior = metadata.get("ruta_paquete_firmado")
                                             metadata["ruta_paquete_generado"] = ruta_paquete
+                                            for clave_entrega in (
+                                                "ruta_paquete_firmado", "metodo", "fecha_envio",
+                                                "empresa", "guia",
+                                            ):
+                                                metadata.pop(clave_entrega, None)
+                                            if ruta_firmado_anterior:
+                                                try:
+                                                    supabase_client.storage.from_("expedientes").remove([ruta_firmado_anterior])
+                                                except Exception as exc:
+                                                    st.warning(
+                                                        "El paquete anterior se reemplazó, pero no se pudo "
+                                                        f"eliminar el archivo firmado anterior: {exc}"
+                                                    )
                                             doc_exp.metadata_json = metadata
                                             doc_exp.ruta_archivo = ruta_paquete
                                             doc_exp.estatus = "Actualizado"
@@ -511,15 +542,15 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                                 
                 with col_der:
                     if not doc_exp:
-                        st.info("Genere primero el paquete documental para habilitar la carga del documento firmado.")
+                        st.info("Genere primero el paquete para firma para habilitar la carga del documento firmado.")
                     archivo_subido = st.file_uploader(
-                        "⬆️ 3. Subir Paquete Firmado (.pdf)",
+                        "⬆️ 3. Adjuntar Paquete Firmado (.pdf)",
                         type=["pdf"],
                         key=f"up_{part.id}",
                         disabled=es_solo_lectura or not doc_exp,
                     )
                     if archivo_subido is not None and doc_exp:
-                        if st.button("Confirmar Entrega de Documento", key=f"btn_up_{part.id}", disabled=es_solo_lectura):
+                        if st.button("Cargar/Adjuntar paquete firmado", key=f"btn_up_{part.id}", disabled=es_solo_lectura):
                             ts = int(datetime.datetime.now().timestamp())
                             proy_limpio = limpiar_nombre_archivo(part.proyecto.nombre)
                             pers_limpio = limpiar_nombre_archivo(part.persona.razon_social_nombre)
@@ -574,7 +605,7 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                     meta = doc_exp.metadata_json or {}
                     ruta_firmado = meta.get("ruta_paquete_firmado")
                     if ruta_firmado:
-                        if st.button("Preparar descarga del paquete firmado", key=f"prep_signed_dl_{part.id}"):
+                        if st.button("Generar link de descarga", key=f"prep_signed_dl_{part.id}"):
                             try:
                                 if supabase_client is None:
                                     raise RuntimeError("Supabase Storage no está configurado.")
@@ -617,11 +648,11 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                             db.commit()
                             st.rerun()
                     elif doc_exp.estatus == "Firmado y Cargado":
-                        metodo = st.radio("Método de entrega", ["Entregado a responsable", "Enviado por paquetería"], key=f"metodo_{part.id}", disabled=es_solo_lectura)
+                        metodo = st.radio("Método de entrega", ["Entregado a responsable del proyecto", "Enviado por paquetería"], key=f"metodo_{part.id}", disabled=es_solo_lectura)
                         admins_proyecto = [admin.email for admin in part.proyecto.admins]
                         admin_texto = ", ".join(admins_proyecto) if admins_proyecto else "Administrador de Proyecto (Pendiente)"
                         empresa, guia = "", ""
-                        if metodo == "Entregado a responsable":
+                        if metodo == "Entregado a responsable del proyecto":
                             st.info(f"👤 Entregar a: **{admin_texto}**")
                         else:
                             col_a, col_b = st.columns(2)
