@@ -127,6 +127,16 @@ def obtener_ruta_paquete_generado(metadata: dict | None, ruta_archivo: str | Non
     return None
 
 
+
+def limpiar_metadatos_reinicio_paquete(metadata: dict | None) -> tuple[dict, str | None]:
+    """Clear signed-package and delivery state while preserving the generated original."""
+    cleaned = dict(metadata or {})
+    ruta_firmado = cleaned.pop("ruta_paquete_firmado", None)
+    for key in ("metodo", "fecha_envio", "empresa", "guia", "responsables_proyecto"):
+        cleaned.pop(key, None)
+    return cleaned, ruta_firmado
+
+
 def procesar_plantillas_a_pdf(plantillas, context: dict, descargar):
     """Render and convert every configured template, rejecting partial packages.
 
