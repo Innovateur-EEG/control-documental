@@ -1,7 +1,7 @@
 # WBS 1.2 — Dynamic Capture Controls
 
 **Branch:** `dev`  
-**Status:** Implementation complete; targeted automated tests passed (41 tests); full-suite and UI verification remain pending.
+**Status:** Implementation complete; dynamic-field logic has regression coverage in the full CI suite. Document-rendering coverage has been expanded for Word tables and Excel workbooks; latest CI result is pending. End-to-end UI verification remains pending.
 
 ## Scope delivered
 
@@ -44,7 +44,7 @@ Dependent options:
 
 ## Acceptance and deferred verification
 
-The implementation scope is complete on `dev`, but this is **not a test-verified release**. The targeted dynamic-field test file was run locally on 2026-10-16 and all 41 tests passed. The full test suite and manual UI regression checks remain pending.
+The implementation scope is complete on `dev`. The full CI suite passed during the persistence-hardening work; additional Word-table and Excel-workbook regression tests were then added, and their latest CI run must pass before treating this increment as verified. Manual UI regression checks remain pending.
 
 When online, run:
 
@@ -59,7 +59,7 @@ Run the full suite and resolve failures before treating WBS 1.2 as technically a
 3. An obsolete dependent selection being rejected on save.
 4. A hidden field retaining its previously saved value.
 5. Required validation not blocking submission for a hidden field.
-6. Generated Word/Excel documents reflecting saved values correctly.
+6. Generated Word/Excel documents reflecting saved values correctly. Automated coverage now checks Word paragraph rendering, Word table-cell rendering, and Excel values across worksheets while preserving formulas and cell formatting.
 
 ## Commits
 
