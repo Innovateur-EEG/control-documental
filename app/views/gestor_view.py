@@ -139,13 +139,13 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                     campos_requeridos_pendientes.append(campo_gate.nombre_mostrar)
 
             if campos_requeridos_pendientes:
-                subtab_form, subtab_evid = st.tabs(["📝 Formulario de Captura", "📎 Documentos Adjuntos"])
-                subtab_paquete = None
                 st.info(
                     "El paquete para firma está bloqueado hasta guardar correctamente los campos obligatorios: "
                     + ", ".join(campos_requeridos_pendientes)
                     + ". Complete y guarde los datos en «Formulario de Captura»."
                 )
+                subtab_form, subtab_evid = st.tabs(["📝 Formulario de Captura", "📎 Documentos Adjuntos"])
+                subtab_paquete = None
             else:
                 subtab_form, subtab_evid, subtab_paquete = st.tabs([
                     "📝 Formulario de Captura", "📎 Documentos Adjuntos", "📦 Paquete para firma"
