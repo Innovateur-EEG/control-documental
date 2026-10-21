@@ -106,3 +106,33 @@ def fusionar_pdfs(lista_pdfs_bytes: list) -> bytes:
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()
+
+def procesar_plantillas_a_pdf(plantillas, context: dict, descargar):
+    """Render and convert every configured template, rejecting partial packages.
+
+    Returns (pdfs, errors). If any template fails, pdfs is empty so callers
+    cannot accidentally publish an incomplete package.
+    """
+    pdfs = []
+    errors = []
+    for plantilla in plantillas:
+        nombre = getattr(plantilla, "nombre", "Plantilla sin nombre")
+        ruta = getattr(plantilla, "ruta_plantilla_word", None)
+        if not ruta:
+            errors.append(f"'{nombre}': no tiene una plantilla configurada.")
+            continue
+        extension = os.path.splitext(ruta)[1].lower()
+        try:
+            if extension not in (".docx", ".xlsx"):
+                raise ValueError(f"formato de plantilla no soportado: {extension or 'sin extensión'}")
+            file_bytes = descargar(ruta)
+            rendered = procesar_word(file_bytes, context) if extension == ".docx" else procesar_excel(file_bytes, context)
+            if not rendered:
+                raise ValueError("el renderizador no produjo un documento.")
+            pdf = convertir_a_pdf(rendered, extension)
+            if not pdf:
+                raise ValueError("la conversión a PDF no produjo contenido.")
+            pdfs.append(pdf)
+        except Exception as exc:
+            errors.append(f"'{nombre}': {exc}")
+    return ([], errors) if errors else (pdfs, [])
