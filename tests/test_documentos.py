@@ -3,7 +3,7 @@ from io import BytesIO
 
 from docx import Document
 
-from app.utils.documentos import procesar_word
+from app.utils.documentos import procesar_excel, procesar_word
 
 
 def test_procesar_word_renders_docx_with_custom_jinja_filters():
