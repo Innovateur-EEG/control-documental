@@ -1,7 +1,7 @@
 # Gestor Interface Closure
 
 **Branch:** `dev`  
-**Implementation status:** Atomic package processing, persistence hardening, and generated/signed path regression tests passed CI. A follow-up fix invalidates cached signed-PDF bytes after replacing the signed file; all recent CI runs passed. Local/cloud end-to-end acceptance remains open.
+**Implementation status:** Atomic package processing, persistence hardening, generated/signed path separation, and signed-PDF cache invalidation passed CI. A review found and fixed stale signed-package metadata on “Reiniciar Flujo”; regression coverage and CI for that final fix are pending. Local/cloud end-to-end acceptance remains open.
 
 ## Scope
 
@@ -96,11 +96,12 @@ Unit tests do not prove that Supabase Storage, the configured database, Streamli
 - Generated packages use unique storage paths instead of overwriting the current package before the database commit. The previous generated/signed objects are removed only after the new metadata commits successfully.
 - Signed-package uploads use unique paths, preserve the generated-package reference, and remove the previous signed object only after the new metadata commits.
 - Replacing a signed package invalidates the session-cached download bytes so the UI cannot offer a previously cached version as the current file.
+- Restarting the delivery flow clears the signed-package path and delivery metadata, invalidates cached signed bytes, and removes the old signed object after the database commit; failed Storage cleanup is reported as a warning.
 - Failed database persistence triggers cleanup of the newly uploaded generated/signed object. Cleanup failures are surfaced as warnings rather than hiding the primary failure.
 - Regression tests cover upload failure, persistence failure, cleanup failure, and the success path for the shared upload/persist helper.
 
 ### Still to verify
 
-- GitHub Actions passed for persistence hardening, atomic template processing, generated/signed path separation, and signed-PDF cache invalidation.
+- GitHub Actions passed for persistence hardening, atomic template processing, generated/signed path separation, and signed-PDF cache invalidation. CI for the reset-flow metadata regression fix is pending.
 - Manual cloud smoke test remains open: upload evidence; generate a package twice; upload a signed package twice; reload the session and confirm the current paths/statuses and downloads. Do not test destructive cases against production data.
 - Storage cleanup is best-effort: if Supabase removal fails, the application warns and can leave an orphaned object for later cleanup.
