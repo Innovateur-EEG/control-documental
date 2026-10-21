@@ -8,7 +8,7 @@ from docxtpl import DocxTemplate
 from sqlalchemy.orm.attributes import flag_modified
 from app.models.database import Participacion, JerarquiaParticipacion, DocumentoExpediente, PlantillaFormato, ConfiguracionCampos, ConfiguracionEvidencia, UsuarioPersonaGestor, supabase_client
 from app.utils.gestor import EDIT_PERMISSION, READ_ONLY_PERMISSION, descendant_participation_ids, effective_permission
-from app.utils.documentos import procesar_plantillas_a_pdf, fusionar_pdfs
+from app.utils.documentos import procesar_plantillas_a_pdf, fusionar_pdfs, obtener_ruta_paquete_generado
 from app.utils.dynamic_fields import checkbox_value, dependent_options, field_config, field_is_visible, merge_capture_values, number_widget_options, text_widget_options, validate_submitted_value
 from app.utils.evidencias import upload_then_persist
 
@@ -494,11 +494,9 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                                         db.add(doc_exp)
                                     else:
                                         metadata = dict(doc_exp.metadata_json or {})
-                                        ruta_paquete_anterior = metadata.get("ruta_paquete_generado")
-                                        if not ruta_paquete_anterior and doc_exp.estatus not in [
-                                            "Firmado y Cargado", "Enviado Físicamente", "Recibido", "Validado Original"
-                                        ]:
-                                            ruta_paquete_anterior = doc_exp.ruta_archivo
+                                        ruta_paquete_anterior = obtener_ruta_paquete_generado(
+                                            metadata, doc_exp.ruta_archivo, doc_exp.estatus
+                                        )
                                         ruta_firmado_anterior = metadata.get("ruta_paquete_firmado")
                                         metadata["ruta_paquete_generado"] = ruta_paquete
                                         for clave_entrega in (
@@ -539,9 +537,11 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                                 st.error("No se pudo generar ningún documento. Verifique las plantillas.")
 
                     ruta_paquete_guardado = (
-                        (doc_exp.metadata_json or {}).get("ruta_paquete_generado")
+                        obtener_ruta_paquete_generado(
+                            doc_exp.metadata_json, doc_exp.ruta_archivo, doc_exp.estatus
+                        )
                         if doc_exp else None
-                    ) or (doc_exp.ruta_archivo if doc_exp and doc_exp.estatus not in ["Firmado y Cargado", "Enviado Físicamente", "Recibido", "Validado Original"] else None)
+                    )
                     if doc_exp and ruta_paquete_guardado:
                         clave_pdf = f"pdf_bytes_{part.id}"
                         if clave_pdf not in st.session_state:
@@ -615,11 +615,11 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                             firmado_subido = True
                             metadata = dict(doc_exp.metadata_json or {})
                             if not metadata.get("ruta_paquete_generado"):
-                                estados_con_ruta_firmada = {
-                                    "Firmado y Cargado", "Enviado Físicamente", "Recibido", "Validado Original"
-                                }
-                                if doc_exp.estatus not in estados_con_ruta_firmada:
-                                    metadata["ruta_paquete_generado"] = doc_exp.ruta_archivo
+                                ruta_generada_previa = obtener_ruta_paquete_generado(
+                                    metadata, doc_exp.ruta_archivo, doc_exp.estatus
+                                )
+                                if ruta_generada_previa:
+                                    metadata["ruta_paquete_generado"] = ruta_generada_previa
                             metadata["ruta_paquete_firmado"] = ruta_pdf
                             doc_exp.metadata_json = metadata
                             doc_exp.estatus = "Firmado y Cargado"
