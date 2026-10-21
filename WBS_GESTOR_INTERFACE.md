@@ -1,7 +1,7 @@
 # Gestor Interface Closure
 
 **Branch:** `dev`  
-**Implementation status:** Atomic package processing and persistence hardening passed CI. A follow-up regression test and legacy generated/signed path correction have been committed; CI for this newest increment is still running. Local/cloud end-to-end acceptance remains open.
+**Implementation status:** Atomic package processing, persistence hardening, and generated/signed path regression tests passed CI. A follow-up fix invalidates cached signed-PDF bytes after replacing the signed file; its CI run and local/cloud end-to-end acceptance remain open.
 
 ## Scope
 
@@ -95,6 +95,7 @@ Unit tests do not prove that Supabase Storage, the configured database, Streamli
 - Evidence uploads now remove the newly uploaded object if database persistence fails; the original error is preserved if rollback or cleanup also fails.
 - Generated packages use unique storage paths instead of overwriting the current package before the database commit. The previous generated/signed objects are removed only after the new metadata commits successfully.
 - Signed-package uploads use unique paths, preserve the generated-package reference, and remove the previous signed object only after the new metadata commits.
+- Replacing a signed package invalidates the session-cached download bytes so the UI cannot offer a previously cached version as the current file.
 - Failed database persistence triggers cleanup of the newly uploaded generated/signed object. Cleanup failures are surfaced as warnings rather than hiding the primary failure.
 - Regression tests cover upload failure, persistence failure, cleanup failure, and the success path for the shared upload/persist helper.
 
