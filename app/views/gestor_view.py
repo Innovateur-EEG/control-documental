@@ -8,7 +8,7 @@ from docxtpl import DocxTemplate
 from sqlalchemy.orm.attributes import flag_modified
 from app.models.database import Participacion, JerarquiaParticipacion, DocumentoExpediente, PlantillaFormato, ConfiguracionCampos, ConfiguracionEvidencia, UsuarioPersonaGestor, supabase_client
 from app.utils.gestor import EDIT_PERMISSION, READ_ONLY_PERMISSION, descendant_participation_ids, effective_permission
-from app.utils.documentos import procesar_plantillas_a_pdf, fusionar_pdfs, obtener_ruta_paquete_generado
+from app.utils.documentos import procesar_plantillas_a_pdf, fusionar_pdfs, obtener_ruta_paquete_generado, limpiar_metadatos_reinicio_paquete
 from app.utils.dynamic_fields import checkbox_value, dependent_options, field_config, field_is_visible, merge_capture_values, number_widget_options, text_widget_options, validate_submitted_value
 from app.utils.evidencias import upload_then_persist
 
@@ -701,11 +701,20 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                                 st.rerun()
                         st.warning("Si cometió un error o la documentación fue rechazada, puede reiniciar el flujo.")
                         if st.button("Reiniciar Flujo", key=f"btn_restart_{part.id}", disabled=es_solo_lectura):
+                            metadata_reiniciada, ruta_firmado_anterior = limpiar_metadatos_reinicio_paquete(meta)
                             doc_exp.estatus = "Actualizado"
-                            meta.pop("metodo", None); meta.pop("fecha_envio", None); meta.pop("empresa", None); meta.pop("guia", None)
-                            doc_exp.metadata_json = meta
+                            doc_exp.metadata_json = metadata_reiniciada
                             flag_modified(doc_exp, "metadata_json")
                             db.commit()
+                            st.session_state.pop(f"pdf_firmado_bytes_{part.id}", None)
+                            if ruta_firmado_anterior and supabase_client is not None:
+                                try:
+                                    supabase_client.storage.from_("expedientes").remove([ruta_firmado_anterior])
+                                except Exception as cleanup_error:
+                                    st.warning(
+                                        "El flujo se reinició, pero no se pudo eliminar el paquete firmado anterior: "
+                                        f"{cleanup_error}"
+                                    )
                             st.rerun()
                     elif doc_exp.estatus == "Firmado y Cargado":
                         metodo = st.radio("Método de entrega", ["Entregado a responsable del proyecto", "Enviado por paquetería"], key=f"metodo_{part.id}", disabled=es_solo_lectura)
