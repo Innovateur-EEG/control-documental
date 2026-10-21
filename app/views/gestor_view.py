@@ -90,8 +90,66 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
             else:
                 c_head2.success("✏️ Edición Completa")
 
-            # --- SUB-PESTAÑAS DE EXPEDIENTE ---
-            subtab_form, subtab_evid, subtab_paquete = st.tabs(["📝 Formulario de Captura", "📎 Documentos Adjuntos", "📦 Paquete para firma"])
+            # --- Gate the signing-package workflow on persisted required capture fields. ---
+            datos_guardados_gate = part.persona.datos_json or {}
+            campos_gate = [
+                campo for campo in db.query(ConfiguracionCampos).all()
+                if campo.tipo_persona in ["Ambas", part.persona.tipo]
+                and (not campo.roles_aplica or part.rol in campo.roles_aplica)
+            ]
+            campos_requeridos_pendientes = []
+            for campo_gate in campos_gate:
+                config_gate = field_config(getattr(campo_gate, "configuracion_json", None))
+                if not config_gate.get("required", False):
+                    continue
+                try:
+                    visible_gate = field_is_visible(config_gate, datos_guardados_gate)
+                except ValueError as exc:
+                    campos_requeridos_pendientes.append(
+                        f"{campo_gate.nombre_mostrar} (configuración condicional inválida: {exc})"
+                    )
+                    continue
+                if not visible_gate:
+                    continue
+                valor_gate = datos_guardados_gate.get(campo_gate.llave_jinja)
+                vacio_gate = valor_gate is None or valor_gate == "" or valor_gate == []
+                if campo_gate.tipo_input == "Casilla" and valor_gate is not True:
+                    vacio_gate = True
+                if not vacio_gate and "options_map" in config_gate:
+                    try:
+                        vacio_gate = not validate_submitted_value(
+                            config_gate, valor_gate, datos_guardados_gate, campo_gate.opciones_json or []
+                        )
+                    except ValueError:
+                        vacio_gate = True
+                if not vacio_gate and campo_gate.tipo_input == "Fecha" and valor_gate:
+                    try:
+                        fecha_gate = (
+                            valor_gate if isinstance(valor_gate, datetime.date)
+                            else datetime.datetime.strptime(str(valor_gate), "%Y-%m-%d").date()
+                        )
+                        if campo_gate.regla_validacion == "max_90_dias":
+                            dias_gate = (datetime.date.today() - fecha_gate).days
+                            vacio_gate = dias_gate > 90 or dias_gate < 0
+                        elif campo_gate.regla_validacion == "vigente_futuro":
+                            vacio_gate = fecha_gate < datetime.date.today()
+                    except (TypeError, ValueError):
+                        vacio_gate = True
+                if vacio_gate:
+                    campos_requeridos_pendientes.append(campo_gate.nombre_mostrar)
+
+            if campos_requeridos_pendientes:
+                subtab_form, subtab_evid = st.tabs(["📝 Formulario de Captura", "📎 Documentos Adjuntos"])
+                subtab_paquete = None
+                st.info(
+                    "El paquete para firma está bloqueado hasta guardar correctamente los campos obligatorios: "
+                    + ", ".join(campos_requeridos_pendientes)
+                    + ". Complete y guarde los datos en «Formulario de Captura»."
+                )
+            else:
+                subtab_form, subtab_evid, subtab_paquete = st.tabs([
+                    "📝 Formulario de Captura", "📎 Documentos Adjuntos", "📦 Paquete para firma"
+                ])
             
             # ==========================================
             # TAB 1: FORMULARIO DINÁMICO
@@ -419,342 +477,343 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
             # ==========================================
             # TAB 3: PAQUETE PARA FIRMA Y TRAZABILIDAD
             # ==========================================
-            with subtab_paquete:
-                st.write("📄 **Gestión del Paquete para firma**")
-                
-                doc_exp = db.query(DocumentoExpediente).filter_by(
-                    participacion_id=part.id,
-                    categoria_documento="Paquete",
-                    tipo_documento="Paquete Unificado",
-                ).first()
-                plantillas_aplicables = [tpl for tpl in db.query(PlantillaFormato).all() if tpl.roles_aplica and part.rol in tpl.roles_aplica]
-
-                if doc_exp: st.info(f"Estatus: **{doc_exp.estatus}**")
-                else: st.warning("Estatus: **No generado**")
+            if subtab_paquete is not None:
+                with subtab_paquete:
+                    st.write("📄 **Gestión del Paquete para firma**")
                     
-                if not plantillas_aplicables:
-                    st.error("No hay formatos configurados para este rol.")
-                else:
-                    if doc_exp:
-                        st.warning(
-                            "Volver a generar el paquete reemplazará el PDF anterior y eliminará "
-                            "el paquete firmado y los datos de entrega/recepción asociados."
-                        )
-                        confirmar_regeneracion = st.checkbox(
-                            "Confirmo que quiero reemplazar el paquete y borrar su evidencia de entrega.",
-                            key=f"confirm_regen_{part.id}",
-                            disabled=es_solo_lectura,
-                        )
-                    else:
-                        confirmar_regeneracion = True
+                    doc_exp = db.query(DocumentoExpediente).filter_by(
+                        participacion_id=part.id,
+                        categoria_documento="Paquete",
+                        tipo_documento="Paquete Unificado",
+                    ).first()
+                    plantillas_aplicables = [tpl for tpl in db.query(PlantillaFormato).all() if tpl.roles_aplica and part.rol in tpl.roles_aplica]
 
-                    if st.button(
-                        "Volver a generar paquete..." if doc_exp else "Generar Paquete PDF Unificado",
-                        key=f"btn_gen_{part.id}",
-                        disabled=es_solo_lectura or not confirmar_regeneracion,
-                    ):
-                        if supabase_client is None:
-                            st.error("Supabase Storage no está configurado; no se puede generar el paquete.")
+                    if doc_exp: st.info(f"Estatus: **{doc_exp.estatus}**")
+                    else: st.warning("Estatus: **No generado**")
+                        
+                    if not plantillas_aplicables:
+                        st.error("No hay formatos configurados para este rol.")
+                    else:
+                        if doc_exp:
+                            st.warning(
+                                "Volver a generar el paquete reemplazará el PDF anterior y eliminará "
+                                "el paquete firmado y los datos de entrega/recepción asociados."
+                            )
+                            confirmar_regeneracion = st.checkbox(
+                                "Confirmo que quiero reemplazar el paquete y borrar su evidencia de entrega.",
+                                key=f"confirm_regen_{part.id}",
+                                disabled=es_solo_lectura,
+                            )
                         else:
-                            context = {"nombre": part.persona.razon_social_nombre, "rfc": part.persona.rfc or "", **datos_actuales}
-                            with st.spinner("Compilando documentos y convirtiendo a PDF... Esto puede tomar unos segundos."):
-                                lista_pdfs, errores_procesamiento = procesar_plantillas_a_pdf(
-                                    plantillas_aplicables,
-                                    context,
-                                    lambda ruta: supabase_client.storage.from_("expedientes").download(ruta),
-                                )
-                            for error in errores_procesamiento:
-                                st.error(f"Error procesando plantilla: {error}")
-                            if lista_pdfs:
-                                pdf_final_bytes = fusionar_pdfs(lista_pdfs)
-                                ts_paquete = int(datetime.datetime.now().timestamp() * 1000)
-                                ruta_paquete = f"paquetes/{part.id}/{ts_paquete}-paquete-unificado.pdf"
-                                ruta_paquete_anterior = None
-                                ruta_firmado_anterior = None
-                                paquete_subido = False
-                                paquete_persistido = False
+                            confirmar_regeneracion = True
+
+                        if st.button(
+                            "Volver a generar paquete..." if doc_exp else "Generar Paquete PDF Unificado",
+                            key=f"btn_gen_{part.id}",
+                            disabled=es_solo_lectura or not confirmar_regeneracion,
+                        ):
+                            if supabase_client is None:
+                                st.error("Supabase Storage no está configurado; no se puede generar el paquete.")
+                            else:
+                                context = {"nombre": part.persona.razon_social_nombre, "rfc": part.persona.rfc or "", **datos_actuales}
+                                with st.spinner("Compilando documentos y convirtiendo a PDF... Esto puede tomar unos segundos."):
+                                    lista_pdfs, errores_procesamiento = procesar_plantillas_a_pdf(
+                                        plantillas_aplicables,
+                                        context,
+                                        lambda ruta: supabase_client.storage.from_("expedientes").download(ruta),
+                                    )
+                                for error in errores_procesamiento:
+                                    st.error(f"Error procesando plantilla: {error}")
+                                if lista_pdfs:
+                                    pdf_final_bytes = fusionar_pdfs(lista_pdfs)
+                                    ts_paquete = int(datetime.datetime.now().timestamp() * 1000)
+                                    ruta_paquete = f"paquetes/{part.id}/{ts_paquete}-paquete-unificado.pdf"
+                                    ruta_paquete_anterior = None
+                                    paquete_subido = False
+                                    paquete_persistido = False
+                                    try:
+                                        if supabase_client is None:
+                                            raise RuntimeError("Supabase Storage no está configurado.")
+                                        supabase_client.storage.from_("expedientes").upload(
+                                            file=pdf_final_bytes,
+                                            path=ruta_paquete,
+                                            file_options={"content-type": "application/pdf", "x-upsert": "false"},
+                                        )
+                                        paquete_subido = True
+                                        if not doc_exp:
+                                            doc_exp = DocumentoExpediente(
+                                                participacion_id=part.id,
+                                                categoria_documento="Paquete",
+                                                tipo_documento="Paquete Unificado",
+                                                estatus="Generado",
+                                                ruta_archivo=ruta_paquete,
+                                                metadata_json={"ruta_paquete_generado": ruta_paquete},
+                                            )
+                                            db.add(doc_exp)
+                                        else:
+                                            metadata = dict(doc_exp.metadata_json or {})
+                                            ruta_paquete_anterior = obtener_ruta_paquete_generado(
+                                                metadata, doc_exp.ruta_archivo, doc_exp.estatus
+                                            )
+                                            # Keep historical signed PDFs in Storage; only clear the active reference.
+                                            metadata["ruta_paquete_generado"] = ruta_paquete
+                                            for clave_entrega in (
+                                                "ruta_paquete_firmado", "metodo", "fecha_envio",
+                                                "empresa", "guia", "responsables_proyecto",
+                                            ):
+                                                metadata.pop(clave_entrega, None)
+                                            doc_exp.metadata_json = metadata
+                                            doc_exp.ruta_archivo = ruta_paquete
+                                            doc_exp.estatus = "Actualizado"
+                                            flag_modified(doc_exp, "metadata_json")
+                                        db.commit()
+                                        paquete_persistido = True
+                                        for ruta_obsoleta in (ruta_paquete_anterior,):
+                                            if ruta_obsoleta and ruta_obsoleta != ruta_paquete:
+                                                try:
+                                                    supabase_client.storage.from_("expedientes").remove([ruta_obsoleta])
+                                                except Exception as exc:
+                                                    st.warning(
+                                                        "El paquete nuevo se guardó, pero no se pudo eliminar "
+                                                        f"el archivo anterior '{ruta_obsoleta}': {exc}"
+                                                    )
+                                        st.session_state[f"pdf_bytes_{part.id}"] = pdf_final_bytes
+                                        st.success("Paquete generado y guardado en almacenamiento.")
+                                        st.rerun()
+                                    except Exception as e:
+                                        db.rollback()
+                                        if paquete_subido and not paquete_persistido:
+                                            try:
+                                                supabase_client.storage.from_("expedientes").remove([ruta_paquete])
+                                            except Exception as cleanup_error:
+                                                st.warning(
+                                                    "Falló el guardado y no se pudo limpiar el paquete temporal: "
+                                                    f"{cleanup_error}"
+                                                )
+                                        st.error(f"No se pudo guardar el paquete generado: {e}")
+                                else:
+                                    st.error("No se pudo generar ningún documento. Verifique las plantillas.")
+
+                        ruta_paquete_guardado = (
+                            obtener_ruta_paquete_generado(
+                                doc_exp.metadata_json, doc_exp.ruta_archivo, doc_exp.estatus
+                            )
+                            if doc_exp else None
+                        )
+                        if doc_exp and ruta_paquete_guardado:
+                            clave_pdf = f"pdf_bytes_{part.id}"
+                            if clave_pdf not in st.session_state:
                                 try:
                                     if supabase_client is None:
                                         raise RuntimeError("Supabase Storage no está configurado.")
-                                    supabase_client.storage.from_("expedientes").upload(
-                                        file=pdf_final_bytes,
-                                        path=ruta_paquete,
-                                        file_options={"content-type": "application/pdf", "x-upsert": "false"},
-                                    )
-                                    paquete_subido = True
-                                    if not doc_exp:
-                                        doc_exp = DocumentoExpediente(
-                                            participacion_id=part.id,
-                                            categoria_documento="Paquete",
-                                            tipo_documento="Paquete Unificado",
-                                            estatus="Generado",
-                                            ruta_archivo=ruta_paquete,
-                                            metadata_json={"ruta_paquete_generado": ruta_paquete},
-                                        )
-                                        db.add(doc_exp)
-                                    else:
-                                        metadata = dict(doc_exp.metadata_json or {})
-                                        ruta_paquete_anterior = obtener_ruta_paquete_generado(
-                                            metadata, doc_exp.ruta_archivo, doc_exp.estatus
-                                        )
-                                        ruta_firmado_anterior = metadata.get("ruta_paquete_firmado")
-                                        metadata["ruta_paquete_generado"] = ruta_paquete
-                                        for clave_entrega in (
-                                            "ruta_paquete_firmado", "metodo", "fecha_envio",
-                                            "empresa", "guia", "responsables_proyecto",
-                                        ):
-                                            metadata.pop(clave_entrega, None)
-                                        doc_exp.metadata_json = metadata
-                                        doc_exp.ruta_archivo = ruta_paquete
-                                        doc_exp.estatus = "Actualizado"
-                                        flag_modified(doc_exp, "metadata_json")
-                                    db.commit()
-                                    paquete_persistido = True
-                                    for ruta_obsoleta in (ruta_paquete_anterior, ruta_firmado_anterior):
-                                        if ruta_obsoleta and ruta_obsoleta != ruta_paquete:
-                                            try:
-                                                supabase_client.storage.from_("expedientes").remove([ruta_obsoleta])
-                                            except Exception as exc:
-                                                st.warning(
-                                                    "El paquete nuevo se guardó, pero no se pudo eliminar "
-                                                    f"el archivo anterior '{ruta_obsoleta}': {exc}"
-                                                )
-                                    st.session_state[f"pdf_bytes_{part.id}"] = pdf_final_bytes
-                                    st.success("Paquete generado y guardado en almacenamiento.")
-                                    st.rerun()
+                                    st.session_state[clave_pdf] = supabase_client.storage.from_("expedientes").download(ruta_paquete_guardado)
                                 except Exception as e:
-                                    db.rollback()
-                                    if paquete_subido and not paquete_persistido:
-                                        try:
-                                            supabase_client.storage.from_("expedientes").remove([ruta_paquete])
-                                        except Exception as cleanup_error:
-                                            st.warning(
-                                                "Falló el guardado y no se pudo limpiar el paquete temporal: "
-                                                f"{cleanup_error}"
-                                            )
-                                    st.error(f"No se pudo guardar el paquete generado: {e}")
-                            else:
-                                st.error("No se pudo generar ningún documento. Verifique las plantillas.")
-
-                    ruta_paquete_guardado = (
-                        obtener_ruta_paquete_generado(
-                            doc_exp.metadata_json, doc_exp.ruta_archivo, doc_exp.estatus
-                        )
-                        if doc_exp else None
-                    )
-                    if doc_exp and ruta_paquete_guardado:
-                        clave_pdf = f"pdf_bytes_{part.id}"
-                        if clave_pdf not in st.session_state:
-                            try:
-                                if supabase_client is None:
-                                    raise RuntimeError("Supabase Storage no está configurado.")
-                                st.session_state[clave_pdf] = supabase_client.storage.from_("expedientes").download(ruta_paquete_guardado)
-                            except Exception as e:
-                                st.warning(f"No se pudo recuperar el paquete guardado: {e}")
-                        if clave_pdf in st.session_state:
-                            st.download_button(
-                                "⬇️ 1. Descargar Paquete (.pdf)",
-                                data=st.session_state[clave_pdf],
-                                file_name=f"Paquete_{limpiar_nombre_archivo(part.persona.razon_social_nombre)}.pdf",
-                                mime="application/pdf",
-                                key=f"dl_{part.id}",
-                            )
-                    elif doc_exp:
-                        st.info("El paquete está registrado, pero no tiene una ruta de descarga. Genérelo nuevamente.")
-                            
-
-                if doc_exp and plantillas_aplicables:
-                    st.markdown("### 📋 Instrucciones de Firma")
-                    st.write("2. Descargue el paquete único en formato PDF e imprímalo. Firme según la siguiente tabla:")
-                    filas_tabla = []
-                    total_firmas_paquete, offset_paginas = 0, 0
-                    for formato in plantillas_aplicables:
-                        firmas = formato.firmas_json or []
-                        num_firmas = len(firmas)
-                        total_firmas_paquete += num_firmas
-                        for i, firma in enumerate(firmas):
-                            pag_documento = offset_paginas + int(firma.get("pag_formato", 0))
-                            filas_tabla.append({
-                                "Documento": formato.nombre if i == 0 else "", "Núm. Firmas": num_firmas if i == 0 else "",
-                                "Pág (Formato)": firma.get("pag_formato", ""), "Pág (Documento)": pag_documento,
-                                "Tipo de Firma": firma.get("tipo_firma", ""), "Rubricar todas": formato.rubricar_todas if i == 0 else ""
-                            })
-                        if num_firmas == 0:
-                            filas_tabla.append({"Documento": formato.nombre, "Núm. Firmas": 0, "Pág (Formato)": "-", "Pág (Documento)": "-", "Tipo de Firma": "-", "Rubricar todas": formato.rubricar_todas})
-                        offset_paginas += formato.paginas_totales
-                    filas_tabla.append({"Documento": "TOTAL PAQUETE", "Núm. Firmas": f"**{total_firmas_paquete}**", "Pág (Formato)": "", "Pág (Documento)": "", "Tipo de Firma": "", "Rubricar todas": ""})
-                    st.markdown(pd.DataFrame(filas_tabla).style.hide(axis="index").to_html(), unsafe_allow_html=True)
-                
-
-                if not doc_exp:
-                    st.info("Genere primero el paquete para firma para habilitar la carga del documento firmado.")
-                archivo_subido = st.file_uploader(
-                    "⬆️ 3. Adjuntar Paquete Firmado (.pdf)",
-                    type=["pdf"],
-                    key=f"up_{part.id}",
-                    disabled=es_solo_lectura or not doc_exp,
-                )
-                if archivo_subido is not None and doc_exp:
-                    if st.button("Cargar/Adjuntar paquete firmado", key=f"btn_up_{part.id}", disabled=es_solo_lectura):
-                        ts = int(datetime.datetime.now().timestamp())
-                        proy_limpio = limpiar_nombre_archivo(part.proyecto.nombre)
-                        pers_limpio = limpiar_nombre_archivo(part.persona.razon_social_nombre)
-                        ts = int(datetime.datetime.now().timestamp() * 1000)
-                        ruta_pdf = f"firmados/{part.id}/{ts}-paquete-firmado.pdf"
-                        ruta_firmado_anterior = (doc_exp.metadata_json or {}).get("ruta_paquete_firmado")
-                        firmado_subido = False
-                        firmado_persistido = False
-                        try:
-                            if supabase_client is None:
-                                raise RuntimeError("Supabase Storage no está configurado.")
-                            supabase_client.storage.from_("expedientes").upload(
-                                file=archivo_subido.getvalue(),
-                                path=ruta_pdf,
-                                file_options={"content-type": "application/pdf", "x-upsert": "false"},
-                            )
-                            firmado_subido = True
-                            metadata = dict(doc_exp.metadata_json or {})
-                            if not metadata.get("ruta_paquete_generado"):
-                                ruta_generada_previa = obtener_ruta_paquete_generado(
-                                    metadata, doc_exp.ruta_archivo, doc_exp.estatus
+                                    st.warning(f"No se pudo recuperar el paquete guardado: {e}")
+                            if clave_pdf in st.session_state:
+                                st.download_button(
+                                    "⬇️ 1. Descargar Paquete (.pdf)",
+                                    data=st.session_state[clave_pdf],
+                                    file_name=f"Paquete_{limpiar_nombre_archivo(part.persona.razon_social_nombre)}.pdf",
+                                    mime="application/pdf",
+                                    key=f"dl_{part.id}",
                                 )
-                                if ruta_generada_previa:
-                                    metadata["ruta_paquete_generado"] = ruta_generada_previa
-                            metadata["ruta_paquete_firmado"] = ruta_pdf
-                            doc_exp.metadata_json = metadata
-                            doc_exp.estatus = "Firmado y Cargado"
-                            doc_exp.ruta_archivo = ruta_pdf
-                            flag_modified(doc_exp, "metadata_json")
-                            db.commit()
-                            firmado_persistido = True
-                            # Do not expose bytes cached from a previously uploaded signed package.
-                            st.session_state.pop(f"pdf_firmado_bytes_{part.id}", None)
-                            if ruta_firmado_anterior and ruta_firmado_anterior != ruta_pdf:
-                                try:
-                                    supabase_client.storage.from_("expedientes").remove([ruta_firmado_anterior])
-                                except Exception as cleanup_error:
-                                    st.warning(
-                                        "El documento firmado nuevo se guardó, pero no se pudo eliminar "
-                                        f"el archivo firmado anterior: {cleanup_error}"
-                                    )
-                            st.success("Documento firmado cargado y registrado.")
-                            st.rerun()
-                        except Exception as e:
-                            db.rollback()
-                            if firmado_subido and not firmado_persistido:
-                                try:
-                                    supabase_client.storage.from_("expedientes").remove([ruta_pdf])
-                                except Exception as cleanup_error:
-                                    st.warning(
-                                        "Falló el registro y no se pudo limpiar el archivo firmado temporal: "
-                                        f"{cleanup_error}"
-                                    )
-                            st.error(f"No se pudo guardar el documento firmado: {e}")
+                        elif doc_exp:
+                            st.info("El paquete está registrado, pero no tiene una ruta de descarga. Genérelo nuevamente.")
+                                
 
-
-                if doc_exp and doc_exp.estatus in ["Firmado y Cargado", "Enviado Físicamente", "Recibido", "Validado Original"]:
-                    st.divider()
-                    st.markdown("### 📦 Trazabilidad del Documento Original")
-                    meta = doc_exp.metadata_json or {}
-                    ruta_firmado = meta.get("ruta_paquete_firmado")
-                    if ruta_firmado:
-                        if st.button("Generar link de descarga", key=f"prep_signed_dl_{part.id}"):
-                            try:
-                                if supabase_client is None:
-                                    raise RuntimeError("Supabase Storage no está configurado.")
-                                st.session_state[f"pdf_firmado_bytes_{part.id}"] = (
-                                    supabase_client.storage.from_("expedientes").download(ruta_firmado)
-                                )
-                            except Exception as exc:
-                                st.error(f"No se pudo recuperar el paquete firmado: {exc}")
-                        pdf_firmado_bytes = st.session_state.get(f"pdf_firmado_bytes_{part.id}")
-                        if pdf_firmado_bytes is not None:
-                            st.download_button(
-                                "Descargar paquete firmado",
-                                data=pdf_firmado_bytes,
-                                file_name=f"Paquete_firmado_{limpiar_nombre_archivo(part.persona.razon_social_nombre)}.pdf",
-                                mime="application/pdf",
-                                key=f"dl_signed_{part.id}",
-                            )
+                    if doc_exp and plantillas_aplicables:
+                        st.markdown("### 📋 Instrucciones de Firma")
+                        st.write("2. Descargue el paquete único en formato PDF e imprímalo. Firme según la siguiente tabla:")
+                        filas_tabla = []
+                        total_firmas_paquete, offset_paginas = 0, 0
+                        for formato in plantillas_aplicables:
+                            firmas = formato.firmas_json or []
+                            num_firmas = len(firmas)
+                            total_firmas_paquete += num_firmas
+                            for i, firma in enumerate(firmas):
+                                pag_documento = offset_paginas + int(firma.get("pag_formato", 0))
+                                filas_tabla.append({
+                                    "Documento": formato.nombre if i == 0 else "", "Núm. Firmas": num_firmas if i == 0 else "",
+                                    "Pág (Formato)": firma.get("pag_formato", ""), "Pág (Documento)": pag_documento,
+                                    "Tipo de Firma": firma.get("tipo_firma", ""), "Rubricar todas": formato.rubricar_todas if i == 0 else ""
+                                })
+                            if num_firmas == 0:
+                                filas_tabla.append({"Documento": formato.nombre, "Núm. Firmas": 0, "Pág (Formato)": "-", "Pág (Documento)": "-", "Tipo de Firma": "-", "Rubricar todas": formato.rubricar_todas})
+                            offset_paginas += formato.paginas_totales
+                        filas_tabla.append({"Documento": "TOTAL PAQUETE", "Núm. Firmas": f"**{total_firmas_paquete}**", "Pág (Formato)": "", "Pág (Documento)": "", "Tipo de Firma": "", "Rubricar todas": ""})
+                        st.markdown(pd.DataFrame(filas_tabla).style.hide(axis="index").to_html(), unsafe_allow_html=True)
                     
-                    if doc_exp.estatus in ["Enviado Físicamente", "Recibido", "Validado Original"]:
-                        st.success(f"✅ Estatus físico actual: **{doc_exp.estatus}**")
-                        st.write(f"**Método:** {meta.get('metodo', 'N/A')} | **Fecha de envío/entrega:** {meta.get('fecha_envio', 'N/A')}")
-                        if meta.get("metodo") in ("Entregado a responsable del proyecto", "Entregado a responsable"):
-                            responsables_guardados = meta.get("responsables_proyecto") or []
-                            if responsables_guardados:
-                                st.write("**Entregado a responsable del proyecto:**")
-                                for responsable in responsables_guardados:
-                                    st.write(
-                                        f"- {responsable.get('nombre') or 'Nombre no registrado'} | "
-                                        f"{responsable.get('email') or 'Correo no registrado'} | "
-                                        f"Tel. {responsable.get('telefono') or 'No registrado'}"
+
+                    if not doc_exp:
+                        st.info("Genere primero el paquete para firma para habilitar la carga del documento firmado.")
+                    revision_carga_firmado = st.session_state.get(f"revision_carga_firmado_{part.id}", 0)
+                    archivo_subido = st.file_uploader(
+                        "⬆️ 3. Adjuntar Paquete Firmado (.pdf)",
+                        type=["pdf"],
+                        key=f"up_{part.id}_{revision_carga_firmado}",
+                        disabled=es_solo_lectura or not doc_exp,
+                    )
+                    if archivo_subido is not None and doc_exp:
+                        if st.button("Cargar/Adjuntar paquete firmado", key=f"btn_up_{part.id}", disabled=es_solo_lectura):
+                            ts = int(datetime.datetime.now().timestamp())
+                            proy_limpio = limpiar_nombre_archivo(part.proyecto.nombre)
+                            pers_limpio = limpiar_nombre_archivo(part.persona.razon_social_nombre)
+                            ts = int(datetime.datetime.now().timestamp() * 1000)
+                            ruta_pdf = f"firmados/{part.id}/{ts}-paquete-firmado.pdf"
+                            ruta_firmado_anterior = (doc_exp.metadata_json or {}).get("ruta_paquete_firmado")
+                            firmado_subido = False
+                            firmado_persistido = False
+                            try:
+                                if supabase_client is None:
+                                    raise RuntimeError("Supabase Storage no está configurado.")
+                                supabase_client.storage.from_("expedientes").upload(
+                                    file=archivo_subido.getvalue(),
+                                    path=ruta_pdf,
+                                    file_options={"content-type": "application/pdf", "x-upsert": "false"},
+                                )
+                                firmado_subido = True
+                                metadata = dict(doc_exp.metadata_json or {})
+                                if not metadata.get("ruta_paquete_generado"):
+                                    ruta_generada_previa = obtener_ruta_paquete_generado(
+                                        metadata, doc_exp.ruta_archivo, doc_exp.estatus
                                     )
-                        if meta.get('metodo') == "Enviado por paquetería":
-                            st.write(f"**Paquetería:** {meta.get('empresa', 'N/A')} | **Guía:** {meta.get('guia', 'N/A')}")
-                        if doc_exp.estatus == "Enviado Físicamente":
-                            st.info("El responsable del proyecto debe registrar la recepción desde el Tablero de Avance Documental.")
-                        elif doc_exp.estatus == "Recibido":
-                            if st.button("Validar documento original", key=f"btn_validate_original_{part.id}", disabled=es_solo_lectura):
-                                doc_exp.estatus = "Validado Original"
+                                    if ruta_generada_previa:
+                                        metadata["ruta_paquete_generado"] = ruta_generada_previa
+                                metadata["ruta_paquete_firmado"] = ruta_pdf
+                                metadata["nombre_paquete_firmado"] = archivo_subido.name
+                                metadata["fecha_carga_paquete_firmado"] = datetime.datetime.now().isoformat(timespec="seconds")
+                                doc_exp.metadata_json = metadata
+                                doc_exp.estatus = "Firmado y Cargado"
+                                doc_exp.ruta_archivo = ruta_pdf
+                                flag_modified(doc_exp, "metadata_json")
+                                db.commit()
+                                firmado_persistido = True
+                                # Do not expose bytes cached from a previously uploaded signed package.
+                                st.session_state.pop(f"pdf_firmado_bytes_{part.id}", None)
+                                # Preserve the previous signed PDF in Storage as upload history.
+                                st.session_state[f"revision_carga_firmado_{part.id}"] = revision_carga_firmado + 1
+                                st.success("Documento firmado cargado y registrado.")
+                                st.rerun()
+                            except Exception as e:
+                                db.rollback()
+                                if firmado_subido and not firmado_persistido:
+                                    try:
+                                        supabase_client.storage.from_("expedientes").remove([ruta_pdf])
+                                    except Exception as cleanup_error:
+                                        st.warning(
+                                            "Falló el registro y no se pudo limpiar el archivo firmado temporal: "
+                                            f"{cleanup_error}"
+                                        )
+                                st.error(f"No se pudo guardar el documento firmado: {e}")
+     
+                    if doc_exp:
+                        meta_firmado_actual = doc_exp.metadata_json or {}
+                        ruta_firmado_actual = meta_firmado_actual.get("ruta_paquete_firmado")
+                        if ruta_firmado_actual:
+                            nombre_firmado_actual = meta_firmado_actual.get("nombre_paquete_firmado") or os.path.basename(ruta_firmado_actual)
+                            fecha_firmado_actual = meta_firmado_actual.get("fecha_carga_paquete_firmado")
+                            if not fecha_firmado_actual and doc_exp.fecha_actualizacion:
+                                fecha_firmado_actual = doc_exp.fecha_actualizacion.strftime("%Y-%m-%d")
+                            col_firmado_label, col_firmado_link = st.columns([3, 1])
+                            col_firmado_label.info(
+                                f"Documento firmado cargado: **{nombre_firmado_actual}** · "
+                                f"Fecha: {fecha_firmado_actual or 'No disponible'}"
+                            )
+                            if col_firmado_link.button("Generar link de descarga", key=f"prep_signed_dl_{part.id}"):
+                                try:
+                                    if supabase_client is None:
+                                        raise RuntimeError("Supabase Storage no está configurado.")
+                                    st.session_state[f"pdf_firmado_bytes_{part.id}"] = (
+                                        supabase_client.storage.from_("expedientes").download(ruta_firmado_actual)
+                                    )
+                                except Exception as exc:
+                                    st.error(f"No se pudo recuperar el paquete firmado: {exc}")
+                            pdf_firmado_bytes = st.session_state.get(f"pdf_firmado_bytes_{part.id}")
+                            if pdf_firmado_bytes is not None:
+                                st.download_button(
+                                    "Descargar paquete firmado",
+                                    data=pdf_firmado_bytes,
+                                    file_name=nombre_firmado_actual,
+                                    mime="application/pdf",
+                                    key=f"dl_signed_{part.id}",
+                                )
+
+                    if doc_exp and doc_exp.estatus in ["Firmado y Cargado", "Enviado Físicamente", "Recibido", "Validado Original"]:
+                        st.divider()
+                        st.markdown("### 📦 Trazabilidad del Documento Original")
+                        meta = doc_exp.metadata_json or {}
+                        ruta_firmado = meta.get("ruta_paquete_firmado")
+                        if doc_exp.estatus in ["Enviado Físicamente", "Recibido", "Validado Original"]:
+                            st.success(f"✅ Estatus físico actual: **{doc_exp.estatus}**")
+                            st.write(f"**Método:** {meta.get('metodo', 'N/A')} | **Fecha de envío/entrega:** {meta.get('fecha_envio', 'N/A')}")
+                            if meta.get("metodo") in ("Entregado a responsable del proyecto", "Entregado a responsable"):
+                                responsables_guardados = meta.get("responsables_proyecto") or []
+                                if responsables_guardados:
+                                    st.write("**Entregado a responsable del proyecto:**")
+                                    for responsable in responsables_guardados:
+                                        st.write(
+                                            f"- {responsable.get('nombre') or 'Nombre no registrado'} | "
+                                            f"{responsable.get('email') or 'Correo no registrado'} | "
+                                            f"Tel. {responsable.get('telefono') or 'No registrado'}"
+                                        )
+                            if meta.get('metodo') == "Enviado por paquetería":
+                                st.write(f"**Paquetería:** {meta.get('empresa', 'N/A')} | **Guía:** {meta.get('guia', 'N/A')}")
+                            if doc_exp.estatus == "Enviado Físicamente":
+                                st.info("El responsable del proyecto debe registrar la recepción desde el Tablero de Avance Documental.")
+                            elif doc_exp.estatus == "Recibido":
+                                if st.button("Validar documento original", key=f"btn_validate_original_{part.id}", disabled=es_solo_lectura):
+                                    doc_exp.estatus = "Validado Original"
+                                    db.commit()
+                                    st.rerun()
+                            st.warning("Si cometió un error o la documentación fue rechazada, puede reiniciar el flujo.")
+                            if st.button("Reiniciar Flujo", key=f"btn_restart_{part.id}", disabled=es_solo_lectura):
+                                metadata_reiniciada, _ruta_firmado_anterior = limpiar_metadatos_reinicio_paquete(meta)
+                                doc_exp.estatus = "Actualizado"
+                                doc_exp.metadata_json = metadata_reiniciada
+                                flag_modified(doc_exp, "metadata_json")
+                                db.commit()
+                                st.session_state.pop(f"pdf_firmado_bytes_{part.id}", None)
+                                # Keep historical signed PDFs in Storage when the active workflow is reset.
+                                st.rerun()
+                        elif doc_exp.estatus == "Firmado y Cargado":
+                            metodo = st.radio("Método de entrega", ["Entregado a responsable del proyecto", "Enviado por paquetería"], key=f"metodo_{part.id}", disabled=es_solo_lectura)
+                            admins_proyecto = [
+                                f"{admin.nombre or 'Nombre no registrado'} | {admin.email} | Tel. {admin.telefono or 'No registrado'}"
+                                for admin in part.proyecto.admins
+                            ]
+                            admin_texto = "; ".join(admins_proyecto) if admins_proyecto else "Responsable de proyecto pendiente de asignación"
+                            empresa, guia = "", ""
+                            if metodo == "Entregado a responsable del proyecto":
+                                st.info(
+                                    f"👤 Entregar al responsable del proyecto **{part.proyecto.nombre}**: "
+                                    f"{admin_texto}"
+                                )
+                            else:
+                                col_a, col_b = st.columns(2)
+                                empresa = col_a.text_input("Empresa de paquetería", key=f"emp_{part.id}", disabled=es_solo_lectura)
+                                guia = col_b.text_input("Número de guía", key=f"guia_{part.id}", disabled=es_solo_lectura)
+                            fecha_envio = st.date_input("Fecha de entrega/envío", value=datetime.date.today(), key=f"fecha_{part.id}", disabled=es_solo_lectura)
+                            if st.button("Registrar Envío/Entrega", key=f"btn_track_{part.id}", disabled=es_solo_lectura):
+                                nuevos_meta = meta.copy()
+                                nuevos_meta["metodo"] = metodo
+                                nuevos_meta["fecha_envio"] = fecha_envio.strftime("%Y-%m-%d")
+                                if metodo == "Entregado a responsable del proyecto":
+                                    nuevos_meta["responsables_proyecto"] = [
+                                        {
+                                            "nombre": admin.nombre or "",
+                                            "email": admin.email,
+                                            "telefono": admin.telefono or "",
+                                        }
+                                        for admin in part.proyecto.admins
+                                    ]
+                                    nuevos_meta.pop("empresa", None)
+                                    nuevos_meta.pop("guia", None)
+                                else:
+                                    nuevos_meta.pop("responsables_proyecto", None)
+                                    nuevos_meta["empresa"] = empresa
+                                    nuevos_meta["guia"] = guia
+                                doc_exp.metadata_json = nuevos_meta
+                                doc_exp.estatus = "Enviado Físicamente"
+                                flag_modified(doc_exp, "metadata_json")
                                 db.commit()
                                 st.rerun()
-                        st.warning("Si cometió un error o la documentación fue rechazada, puede reiniciar el flujo.")
-                        if st.button("Reiniciar Flujo", key=f"btn_restart_{part.id}", disabled=es_solo_lectura):
-                            metadata_reiniciada, ruta_firmado_anterior = limpiar_metadatos_reinicio_paquete(meta)
-                            doc_exp.estatus = "Actualizado"
-                            doc_exp.metadata_json = metadata_reiniciada
-                            flag_modified(doc_exp, "metadata_json")
-                            db.commit()
-                            st.session_state.pop(f"pdf_firmado_bytes_{part.id}", None)
-                            if ruta_firmado_anterior and supabase_client is not None:
-                                try:
-                                    supabase_client.storage.from_("expedientes").remove([ruta_firmado_anterior])
-                                except Exception as cleanup_error:
-                                    st.warning(
-                                        "El flujo se reinició, pero no se pudo eliminar el paquete firmado anterior: "
-                                        f"{cleanup_error}"
-                                    )
-                            st.rerun()
-                    elif doc_exp.estatus == "Firmado y Cargado":
-                        metodo = st.radio("Método de entrega", ["Entregado a responsable del proyecto", "Enviado por paquetería"], key=f"metodo_{part.id}", disabled=es_solo_lectura)
-                        admins_proyecto = [
-                            f"{admin.nombre or 'Nombre no registrado'} | {admin.email} | Tel. {admin.telefono or 'No registrado'}"
-                            for admin in part.proyecto.admins
-                        ]
-                        admin_texto = "; ".join(admins_proyecto) if admins_proyecto else "Responsable de proyecto pendiente de asignación"
-                        empresa, guia = "", ""
-                        if metodo == "Entregado a responsable del proyecto":
-                            st.info(
-                                f"👤 Entregar al responsable del proyecto **{part.proyecto.nombre}**: "
-                                f"{admin_texto}"
-                            )
-                        else:
-                            col_a, col_b = st.columns(2)
-                            empresa = col_a.text_input("Empresa de paquetería", key=f"emp_{part.id}", disabled=es_solo_lectura)
-                            guia = col_b.text_input("Número de guía", key=f"guia_{part.id}", disabled=es_solo_lectura)
-                        fecha_envio = st.date_input("Fecha de entrega/envío", value=datetime.date.today(), key=f"fecha_{part.id}", disabled=es_solo_lectura)
-                        if st.button("Registrar Envío/Entrega", key=f"btn_track_{part.id}", disabled=es_solo_lectura):
-                            nuevos_meta = meta.copy()
-                            nuevos_meta["metodo"] = metodo
-                            nuevos_meta["fecha_envio"] = fecha_envio.strftime("%Y-%m-%d")
-                            if metodo == "Entregado a responsable del proyecto":
-                                nuevos_meta["responsables_proyecto"] = [
-                                    {
-                                        "nombre": admin.nombre or "",
-                                        "email": admin.email,
-                                        "telefono": admin.telefono or "",
-                                    }
-                                    for admin in part.proyecto.admins
-                                ]
-                                nuevos_meta.pop("empresa", None)
-                                nuevos_meta.pop("guia", None)
-                            else:
-                                nuevos_meta.pop("responsables_proyecto", None)
-                                nuevos_meta["empresa"] = empresa
-                                nuevos_meta["guia"] = guia
-                            doc_exp.metadata_json = nuevos_meta
-                            doc_exp.estatus = "Enviado Físicamente"
-                            flag_modified(doc_exp, "metadata_json")
-                            db.commit()
-                            st.rerun()
