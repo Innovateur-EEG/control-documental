@@ -16,10 +16,11 @@ def upload_then_persist(upload, persist, rollback, compensate=None):
     except Exception:
         try:
             rollback()
-        finally:
-            if uploaded and compensate is not None:
-                try:
-                    compensate()
-                except Exception:
-                    pass
+        except Exception:
+            pass
+        if uploaded and compensate is not None:
+            try:
+                compensate()
+            except Exception:
+                pass
         raise
