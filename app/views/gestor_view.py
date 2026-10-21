@@ -481,6 +481,7 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                                 ruta_paquete_anterior = None
                                 ruta_firmado_anterior = None
                                 paquete_subido = False
+                                paquete_persistido = False
                                 try:
                                     if supabase_client is None:
                                         raise RuntimeError("Supabase Storage no está configurado.")
@@ -519,6 +520,7 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                                         doc_exp.estatus = "Actualizado"
                                         flag_modified(doc_exp, "metadata_json")
                                     db.commit()
+                                    paquete_persistido = True
                                     for ruta_obsoleta in (ruta_paquete_anterior, ruta_firmado_anterior):
                                         if ruta_obsoleta and ruta_obsoleta != ruta_paquete:
                                             try:
@@ -533,7 +535,7 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                                     st.rerun()
                                 except Exception as e:
                                     db.rollback()
-                                    if paquete_subido:
+                                    if paquete_subido and not paquete_persistido:
                                         try:
                                             supabase_client.storage.from_("expedientes").remove([ruta_paquete])
                                         except Exception as cleanup_error:
@@ -610,6 +612,7 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                         ruta_pdf = f"firmados/{part.id}/{ts}-paquete-firmado.pdf"
                         ruta_firmado_anterior = (doc_exp.metadata_json or {}).get("ruta_paquete_firmado")
                         firmado_subido = False
+                        firmado_persistido = False
                         try:
                             if supabase_client is None:
                                 raise RuntimeError("Supabase Storage no está configurado.")
@@ -627,6 +630,7 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                             doc_exp.ruta_archivo = ruta_pdf
                             flag_modified(doc_exp, "metadata_json")
                             db.commit()
+                            firmado_persistido = True
                             if ruta_firmado_anterior and ruta_firmado_anterior != ruta_pdf:
                                 try:
                                     supabase_client.storage.from_("expedientes").remove([ruta_firmado_anterior])
@@ -639,7 +643,7 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                             st.rerun()
                         except Exception as e:
                             db.rollback()
-                            if firmado_subido:
+                            if firmado_subido and not firmado_persistido:
                                 try:
                                     supabase_client.storage.from_("expedientes").remove([ruta_pdf])
                                 except Exception as cleanup_error:
