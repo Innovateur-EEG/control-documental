@@ -168,3 +168,22 @@ def test_template_batch_discards_prior_pdfs_when_conversion_fails(monkeypatch):
     assert "Segunda" in errors[0]
     assert "conversion failed" in errors[0]
 
+def test_generated_package_path_never_falls_back_to_legacy_signed_file():
+    from app.utils.documentos import obtener_ruta_paquete_generado
+
+    assert obtener_ruta_paquete_generado(
+        {"ruta_paquete_generado": "generated/current.pdf"},
+        "signed/legacy.pdf",
+        "Firmado y Cargado",
+    ) == "generated/current.pdf"
+    assert obtener_ruta_paquete_generado(
+        {},
+        "signed/legacy.pdf",
+        "Firmado y Cargado",
+    ) is None
+    assert obtener_ruta_paquete_generado(
+        {},
+        "generated/legacy.pdf",
+        "Generado",
+    ) == "generated/legacy.pdf"
+
