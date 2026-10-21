@@ -132,7 +132,10 @@ def limpiar_metadatos_reinicio_paquete(metadata: dict | None) -> tuple[dict, str
     """Clear signed-package and delivery state while preserving the generated original."""
     cleaned = dict(metadata or {})
     ruta_firmado = cleaned.pop("ruta_paquete_firmado", None)
-    for key in ("metodo", "fecha_envio", "empresa", "guia", "responsables_proyecto"):
+    for key in (
+        "nombre_paquete_firmado", "fecha_carga_paquete_firmado",
+        "metodo", "fecha_envio", "empresa", "guia", "responsables_proyecto",
+    ):
         cleaned.pop(key, None)
     return cleaned, ruta_firmado
 
