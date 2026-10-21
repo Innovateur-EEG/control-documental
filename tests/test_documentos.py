@@ -68,3 +68,44 @@ def test_procesar_word_renders_capture_values_inside_template_tables():
 
     assert rendered.tables[0].cell(0, 0).text == "Representante"
     assert rendered.tables[0].cell(0, 1).text == "Nombre guardado"
+
+
+def test_template_batch_fails_closed_instead_of_returning_partial_package(monkeypatch):
+    from types import SimpleNamespace
+    import app.utils.documentos as documentos
+
+    monkeypatch.setattr(documentos, "procesar_word", lambda data, context: b"rendered")
+    monkeypatch.setattr(documentos, "procesar_excel", lambda data, context: b"rendered")
+    monkeypatch.setattr(documentos, "convertir_a_pdf", lambda data, extension: b"pdf")
+    templates = [
+        SimpleNamespace(nombre="Correcta", ruta_plantilla_word="ok.docx"),
+        SimpleNamespace(nombre="Fallida", ruta_plantilla_word="bad.docx"),
+    ]
+
+    def download(path):
+        if path == "bad.docx":
+            raise RuntimeError("storage unavailable")
+        return b"template"
+
+    pdfs, errors = documentos.procesar_plantillas_a_pdf(templates, {}, download)
+
+    assert pdfs == []
+    assert len(errors) == 1
+    assert "Fallida" in errors[0]
+    assert "storage unavailable" in errors[0]
+
+
+def test_template_batch_rejects_missing_and_unsupported_templates():
+    from types import SimpleNamespace
+    from app.utils.documentos import procesar_plantillas_a_pdf
+
+    templates = [
+        SimpleNamespace(nombre="Sin archivo", ruta_plantilla_word=None),
+        SimpleNamespace(nombre="Formato antiguo", ruta_plantilla_word="archivo.doc"),
+    ]
+    pdfs, errors = procesar_plantillas_a_pdf(templates, {}, lambda path: b"unused")
+
+    assert pdfs == []
+    assert len(errors) == 2
+    assert "Sin archivo" in errors[0]
+    assert "Formato antiguo" in errors[1]
