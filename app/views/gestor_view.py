@@ -405,7 +405,12 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                                                 flag_modified(doc_ev, "metadata_json")
                                             db.commit()
 
-                                        upload_then_persist(_upload_evidencia, _persist_evidencia, db.rollback)
+                                        upload_then_persist(
+                                            _upload_evidencia,
+                                            _persist_evidencia,
+                                            db.rollback,
+                                            lambda: supabase_client.storage.from_("expedientes").remove([ruta_ev]),
+                                        )
                                         st.success("Evidencia cargada y registrada.")
                                         st.rerun()
                                     except Exception as e:
@@ -471,13 +476,20 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                                         st.error(f"Error procesando '{tpl.nombre}': {e}")
                             if lista_pdfs:
                                 pdf_final_bytes = fusionar_pdfs(lista_pdfs)
-                                ruta_paquete = f"paquetes/{part.id}/paquete-unificado.pdf"
+                                ts_paquete = int(datetime.datetime.now().timestamp() * 1000)
+                                ruta_paquete = f"paquetes/{part.id}/{ts_paquete}-paquete-unificado.pdf"
+                                ruta_paquete_anterior = None
+                                ruta_firmado_anterior = None
+                                paquete_subido = False
                                 try:
+                                    if supabase_client is None:
+                                        raise RuntimeError("Supabase Storage no está configurado.")
                                     supabase_client.storage.from_("expedientes").upload(
                                         file=pdf_final_bytes,
                                         path=ruta_paquete,
-                                        file_options={"content-type": "application/pdf", "x-upsert": "true"},
+                                        file_options={"content-type": "application/pdf", "x-upsert": "false"},
                                     )
+                                    paquete_subido = True
                                     if not doc_exp:
                                         doc_exp = DocumentoExpediente(
                                             participacion_id=part.id,
@@ -490,6 +502,11 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                                         db.add(doc_exp)
                                     else:
                                         metadata = dict(doc_exp.metadata_json or {})
+                                        ruta_paquete_anterior = metadata.get("ruta_paquete_generado")
+                                        if not ruta_paquete_anterior and doc_exp.estatus not in [
+                                            "Firmado y Cargado", "Enviado Físicamente", "Recibido", "Validado Original"
+                                        ]:
+                                            ruta_paquete_anterior = doc_exp.ruta_archivo
                                         ruta_firmado_anterior = metadata.get("ruta_paquete_firmado")
                                         metadata["ruta_paquete_generado"] = ruta_paquete
                                         for clave_entrega in (
@@ -497,24 +514,33 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                                             "empresa", "guia", "responsables_proyecto",
                                         ):
                                             metadata.pop(clave_entrega, None)
-                                        if ruta_firmado_anterior:
-                                            try:
-                                                supabase_client.storage.from_("expedientes").remove([ruta_firmado_anterior])
-                                            except Exception as exc:
-                                                st.warning(
-                                                    "El paquete anterior se reemplazó, pero no se pudo "
-                                                    f"eliminar el archivo firmado anterior: {exc}"
-                                                )
                                         doc_exp.metadata_json = metadata
                                         doc_exp.ruta_archivo = ruta_paquete
                                         doc_exp.estatus = "Actualizado"
                                         flag_modified(doc_exp, "metadata_json")
                                     db.commit()
+                                    for ruta_obsoleta in (ruta_paquete_anterior, ruta_firmado_anterior):
+                                        if ruta_obsoleta and ruta_obsoleta != ruta_paquete:
+                                            try:
+                                                supabase_client.storage.from_("expedientes").remove([ruta_obsoleta])
+                                            except Exception as exc:
+                                                st.warning(
+                                                    "El paquete nuevo se guardó, pero no se pudo eliminar "
+                                                    f"el archivo anterior '{ruta_obsoleta}': {exc}"
+                                                )
                                     st.session_state[f"pdf_bytes_{part.id}"] = pdf_final_bytes
                                     st.success("Paquete generado y guardado en almacenamiento.")
                                     st.rerun()
                                 except Exception as e:
                                     db.rollback()
+                                    if paquete_subido:
+                                        try:
+                                            supabase_client.storage.from_("expedientes").remove([ruta_paquete])
+                                        except Exception as cleanup_error:
+                                            st.warning(
+                                                "Falló el guardado y no se pudo limpiar el paquete temporal: "
+                                                f"{cleanup_error}"
+                                            )
                                     st.error(f"No se pudo guardar el paquete generado: {e}")
                             else:
                                 st.error("No se pudo generar ningún documento. Verifique las plantillas.")
@@ -580,15 +606,19 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                         ts = int(datetime.datetime.now().timestamp())
                         proy_limpio = limpiar_nombre_archivo(part.proyecto.nombre)
                         pers_limpio = limpiar_nombre_archivo(part.persona.razon_social_nombre)
+                        ts = int(datetime.datetime.now().timestamp() * 1000)
                         ruta_pdf = f"firmados/{part.id}/{ts}-paquete-firmado.pdf"
+                        ruta_firmado_anterior = (doc_exp.metadata_json or {}).get("ruta_paquete_firmado")
+                        firmado_subido = False
                         try:
                             if supabase_client is None:
                                 raise RuntimeError("Supabase Storage no está configurado.")
                             supabase_client.storage.from_("expedientes").upload(
                                 file=archivo_subido.getvalue(),
                                 path=ruta_pdf,
-                                file_options={"content-type": "application/pdf", "x-upsert": "true"},
+                                file_options={"content-type": "application/pdf", "x-upsert": "false"},
                             )
+                            firmado_subido = True
                             metadata = dict(doc_exp.metadata_json or {})
                             metadata["ruta_paquete_generado"] = metadata.get("ruta_paquete_generado") or doc_exp.ruta_archivo
                             metadata["ruta_paquete_firmado"] = ruta_pdf
@@ -597,10 +627,26 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                             doc_exp.ruta_archivo = ruta_pdf
                             flag_modified(doc_exp, "metadata_json")
                             db.commit()
+                            if ruta_firmado_anterior and ruta_firmado_anterior != ruta_pdf:
+                                try:
+                                    supabase_client.storage.from_("expedientes").remove([ruta_firmado_anterior])
+                                except Exception as cleanup_error:
+                                    st.warning(
+                                        "El documento firmado nuevo se guardó, pero no se pudo eliminar "
+                                        f"el archivo firmado anterior: {cleanup_error}"
+                                    )
                             st.success("Documento firmado cargado y registrado.")
                             st.rerun()
                         except Exception as e:
                             db.rollback()
+                            if firmado_subido:
+                                try:
+                                    supabase_client.storage.from_("expedientes").remove([ruta_pdf])
+                                except Exception as cleanup_error:
+                                    st.warning(
+                                        "Falló el registro y no se pudo limpiar el archivo firmado temporal: "
+                                        f"{cleanup_error}"
+                                    )
                             st.error(f"No se pudo guardar el documento firmado: {e}")
 
 
