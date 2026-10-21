@@ -113,7 +113,7 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                     continue
                 valor_gate = datos_guardados_gate.get(campo_gate.llave_jinja)
                 vacio_gate = valor_gate is None or valor_gate == "" or valor_gate == []
-                if campo_gate.tipo_input == "Casilla" and valor_gate is not True:
+                if campo_gate.tipo_input == "Casilla" and not checkbox_value(valor_gate):
                     vacio_gate = True
                 if not vacio_gate and "options_map" in config_gate:
                     try:
@@ -496,8 +496,8 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                     else:
                         if doc_exp:
                             st.warning(
-                                "Volver a generar el paquete reemplazará el PDF anterior y eliminará "
-                                "el paquete firmado y los datos de entrega/recepción asociados."
+                                "Volver a generar el paquete reemplazará el PDF generado y reiniciará la referencia "
+                                "al firmado actual y los datos de entrega/recepción. Los archivos firmados históricos se conservan."
                             )
                             confirmar_regeneracion = st.checkbox(
                                 "Confirmo que quiero reemplazar el paquete y borrar su evidencia de entrega.",
@@ -558,7 +558,8 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                                             # Keep historical signed PDFs in Storage; only clear the active reference.
                                             metadata["ruta_paquete_generado"] = ruta_paquete
                                             for clave_entrega in (
-                                                "ruta_paquete_firmado", "metodo", "fecha_envio",
+                                                "ruta_paquete_firmado", "nombre_paquete_firmado",
+                                                "fecha_carga_paquete_firmado", "metodo", "fecha_envio",
                                                 "empresa", "guia", "responsables_proyecto",
                                             ):
                                                 metadata.pop(clave_entrega, None)
