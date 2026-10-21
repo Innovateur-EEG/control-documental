@@ -458,22 +458,33 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                         else:
                             context = {"nombre": part.persona.razon_social_nombre, "rfc": part.persona.rfc or "", **datos_actuales}
                             lista_pdfs = []
+                            errores_procesamiento = []
                             with st.spinner("Compilando documentos y convirtiendo a PDF... Esto puede tomar unos segundos."):
                                 for tpl in plantillas_aplicables:
                                     if not tpl.ruta_plantilla_word:
+                                        errores_procesamiento.append(f"'{tpl.nombre}': no tiene una plantilla configurada.")
                                         continue
                                     ext = os.path.splitext(tpl.ruta_plantilla_word)[1].lower()
                                     try:
+                                        if ext not in (".docx", ".xlsx"):
+                                            raise ValueError(f"formato de plantilla no soportado: {ext or 'sin extensión'}")
                                         archivo_bytes = supabase_client.storage.from_("expedientes").download(tpl.ruta_plantilla_word)
                                         doc_procesado = (
                                             procesar_word(archivo_bytes, context) if ext == ".docx"
-                                            else procesar_excel(archivo_bytes, context) if ext == ".xlsx"
-                                            else None
+                                            else procesar_excel(archivo_bytes, context)
                                         )
-                                        if doc_procesado:
-                                            lista_pdfs.append(convertir_a_pdf(doc_procesado, ext))
+                                        if not doc_procesado:
+                                            raise ValueError("el renderizador no produjo un documento.")
+                                        pdf_procesado = convertir_a_pdf(doc_procesado, ext)
+                                        if not pdf_procesado:
+                                            raise ValueError("la conversión a PDF no produjo contenido.")
+                                        lista_pdfs.append(pdf_procesado)
                                     except Exception as e:
-                                        st.error(f"Error procesando '{tpl.nombre}': {e}")
+                                        errores_procesamiento.append(f"'{tpl.nombre}': {e}")
+                            if errores_procesamiento:
+                                for error in errores_procesamiento:
+                                    st.error(f"Error procesando plantilla: {error}")
+                                lista_pdfs = []
                             if lista_pdfs:
                                 pdf_final_bytes = fusionar_pdfs(lista_pdfs)
                                 ts_paquete = int(datetime.datetime.now().timestamp() * 1000)
