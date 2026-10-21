@@ -627,6 +627,8 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                             flag_modified(doc_exp, "metadata_json")
                             db.commit()
                             firmado_persistido = True
+                            # Do not expose bytes cached from a previously uploaded signed package.
+                            st.session_state.pop(f"pdf_firmado_bytes_{part.id}", None)
                             if ruta_firmado_anterior and ruta_firmado_anterior != ruta_pdf:
                                 try:
                                     supabase_client.storage.from_("expedientes").remove([ruta_firmado_anterior])
