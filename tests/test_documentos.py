@@ -187,3 +187,26 @@ def test_generated_package_path_never_falls_back_to_legacy_signed_file():
         "Generado",
     ) == "generated/legacy.pdf"
 
+def test_restart_package_metadata_clears_signed_and_delivery_state_but_preserves_generated_path():
+    from app.utils.documentos import limpiar_metadatos_reinicio_paquete
+
+    metadata = {
+        "ruta_paquete_generado": "paquetes/1/generated.pdf",
+        "ruta_paquete_firmado": "firmados/1/signed.pdf",
+        "metodo": "Enviado por paquetería",
+        "fecha_envio": "2026-10-20",
+        "empresa": "Paquetería",
+        "guia": "ABC123",
+        "responsables_proyecto": [{"email": "admin@example.com"}],
+        "other_metadata": "preserve",
+    }
+
+    cleaned, ruta_firmado = limpiar_metadatos_reinicio_paquete(metadata)
+
+    assert ruta_firmado == "firmados/1/signed.pdf"
+    assert cleaned == {
+        "ruta_paquete_generado": "paquetes/1/generated.pdf",
+        "other_metadata": "preserve",
+    }
+    assert metadata["ruta_paquete_firmado"] == "firmados/1/signed.pdf"
+
