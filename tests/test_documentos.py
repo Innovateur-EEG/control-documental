@@ -193,6 +193,8 @@ def test_restart_package_metadata_clears_signed_and_delivery_state_but_preserves
     metadata = {
         "ruta_paquete_generado": "paquetes/1/generated.pdf",
         "ruta_paquete_firmado": "firmados/1/signed.pdf",
+        "nombre_paquete_firmado": "signed.pdf",
+        "fecha_carga_paquete_firmado": "2026-10-20T10:30:00",
         "metodo": "Enviado por paquetería",
         "fecha_envio": "2026-10-20",
         "empresa": "Paquetería",
