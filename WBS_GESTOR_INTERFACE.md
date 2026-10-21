@@ -93,15 +93,26 @@ Unit tests do not prove that Supabase Storage, the configured database, Streamli
 ### Implemented
 
 - Evidence uploads now remove the newly uploaded object if database persistence fails; the original error is preserved if rollback or cleanup also fails.
-- Generated packages use unique storage paths instead of overwriting the current package before the database commit. The previous generated/signed objects are removed only after the new metadata commits successfully.
-- Signed-package uploads use unique paths, preserve the generated-package reference, and remove the previous signed object only after the new metadata commits.
+- Generated packages use unique storage paths instead of overwriting the current package before the database commit. The previous generated object is removed only after the new metadata commits successfully; historical signed PDFs are retained in Storage.
+- Signed-package uploads use unique paths, preserve the generated-package reference, and retain prior signed objects as history. Metadata points to the latest signed upload.
 - Replacing a signed package invalidates the session-cached download bytes so the UI cannot offer a previously cached version as the current file.
-- Restarting the delivery flow clears the signed-package path and delivery metadata, invalidates cached signed bytes, and removes the old signed object after the database commit; failed Storage cleanup is reported as a warning.
+- Restarting the delivery flow clears the active signed-package path, signed-file label/date, and delivery metadata, and invalidates cached signed bytes. The signed object remains in Storage as history.
 - Failed database persistence triggers cleanup of the newly uploaded generated/signed object. Cleanup failures are surfaced as warnings rather than hiding the primary failure.
 - Regression tests cover upload failure, persistence failure, cleanup failure, and the success path for the shared upload/persist helper.
 
 ### Still to verify
 
 - GitHub Actions passed for persistence hardening, atomic template processing, generated/signed path separation, and signed-PDF cache invalidation. CI for the reset-flow metadata regression fix is pending.
-- Manual cloud smoke test remains open: upload evidence; generate a package twice; upload a signed package twice; reload the session and confirm the current paths/statuses and downloads. Do not test destructive cases against production data.
+- Manual cloud smoke test: evidence upload passed. Package generation/replacement, signed upload, persistence after reload, and path separation passed. Remaining manual checks are the updated signed-upload label/widget refresh, download-link placement, required-field gate, access revocation isolation, and generated Word/Excel/PDF output review. Do not test destructive cases against production data.
 - Storage cleanup is best-effort: if Supabase removal fails, the application warns and can leave an orphaned object for later cleanup.
+
+
+## Latest manual acceptance and follow-up (2026-10-21)
+
+- Gestor access/permission checks and conditional-field persistence are accepted.
+- Evidence upload passed all three checks: visible in the app, present in Supabase Storage, and matching `DocumentoExpediente` record present.
+- Package-flow checks 1–2 and 4–6 passed. The generated-package folder retains only the current generated PDF; the signed folder retains prior uploads as history.
+- Signed PDF upload itself works. UI follow-up implemented on `dev`: show uploaded filename and timestamp, reset the uploader widget after upload, and place “Generar link de descarga” beside the file label.
+- Package tab is now hidden while visible required capture fields are missing or invalid, with an informational message naming the fields. Values must be saved before the gate opens.
+- Automated CI passed for code commit `91c320c`. Manual validation of the UI fixes remains pending in the Streamlit mirror.
+- Do not merge to `main` until remaining manual acceptance is complete and the user explicitly authorizes the merge.
