@@ -1,15 +1,25 @@
-"""Small orchestration helpers for evidence upload workflows."""
+"""Small orchestration helpers for storage-backed persistence workflows."""
 
 
-def upload_then_persist(upload, persist, rollback):
-    """Persist evidence metadata only after storage upload succeeds.
+def upload_then_persist(upload, persist, rollback, compensate=None):
+    """Upload an object, persist its metadata, and compensate on persistence failure.
 
-    The callbacks keep this helper independent of Supabase and SQLAlchemy so the
-    failure path can be tested without external services or a live database.
+    The optional compensate callback removes the newly uploaded object if
+    persistence fails. Cleanup errors are suppressed to preserve the original
+    exception. It is only called when upload completed successfully.
     """
+    uploaded = False
     try:
         upload()
+        uploaded = True
         persist()
     except Exception:
-        rollback()
+        try:
+            rollback()
+        finally:
+            if uploaded and compensate is not None:
+                try:
+                    compensate()
+                except Exception:
+                    pass
         raise
