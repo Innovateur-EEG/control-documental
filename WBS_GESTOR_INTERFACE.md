@@ -1,7 +1,7 @@
 # Gestor Interface Closure
 
 **Branch:** `dev`  
-**Implementation status:** In progress; automated and local end-to-end verification remain required.
+**Implementation status:** Implementation and automated CI verification are green on `dev`; local/cloud end-to-end acceptance remains open.
 
 ## Scope
 
@@ -16,6 +16,7 @@ This work closes the end-user (gestor) workflow without redesigning the applicat
 - Read-only users cannot trigger write operations such as package generation.
 - Evidence uploads report failures cleanly and commit their database record only after storage upload succeeds.
 - Generated PDF packages are persisted in Supabase Storage and can be downloaded again after a new session.
+- Package generation now fails closed: if any configured template is missing, unsupported, fails to download/render, or fails PDF conversion, no partial package is returned or published.
 - Signed packages have a separate storage path; metadata preserves the generated-package path.
 - Signed-package upload is unavailable until a package record exists.
 - Removing access targets the selected user/person assignment; deleting a person clears the mapped association relationship.
@@ -78,7 +79,7 @@ Changes pushed to `dev`; they are not yet accepted as locally validated.
 - Signed package upload button now reads “Cargar/Adjuntar paquete firmado”; the signed-file link action reads “Generar link de descarga”.
 - Project manager receipt control was moved to the document progress dashboard, restricted to the project's Admin or SuperAdmin, and shown only for packages that have been sent. Gestor users are directed to the dashboard for receipt registration.
 - User records now have an optional name field so the delivery recipient can be displayed with name, email, and phone. Existing accounts will need their names filled in through “Directorio de Usuarios y Accesos”.
-- The current GitHub Actions run and subsequent runs must pass before treating the implementation as verified. Local end-to-end validation remains required.
+- The latest GitHub Actions runs passed, including atomic template-batch regression tests. Local end-to-end validation remains required.
 
 ## Known verification boundary
 
@@ -98,6 +99,6 @@ Unit tests do not prove that Supabase Storage, the configured database, Streamli
 
 ### Still to verify
 
-- GitHub Actions must pass on the final persistence-hardening commit.
+- GitHub Actions passed for the persistence-hardening changes and the subsequent atomic template-processing changes.
 - Manual cloud smoke test remains advisable: upload evidence; generate a package twice; upload a signed package twice; reload the session and confirm the current paths/statuses and downloads. Do not test destructive cases against production data.
 - Storage cleanup is best-effort: if Supabase removal fails, the application warns and can leave an orphaned object for later cleanup.
