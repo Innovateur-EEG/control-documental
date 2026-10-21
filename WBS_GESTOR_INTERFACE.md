@@ -1,7 +1,7 @@
 # Gestor Interface Closure
 
 **Branch:** `dev`  
-**Implementation status:** Atomic package processing, persistence hardening, and generated/signed path regression tests passed CI. A follow-up fix invalidates cached signed-PDF bytes after replacing the signed file; its CI run and local/cloud end-to-end acceptance remain open.
+**Implementation status:** Atomic package processing, persistence hardening, and generated/signed path regression tests passed CI. A follow-up fix invalidates cached signed-PDF bytes after replacing the signed file; all recent CI runs passed. Local/cloud end-to-end acceptance remains open.
 
 ## Scope
 
@@ -101,6 +101,6 @@ Unit tests do not prove that Supabase Storage, the configured database, Streamli
 
 ### Still to verify
 
-- GitHub Actions passed for persistence hardening and initial atomic template processing. Follow-up path-separation changes and their regression test are awaiting CI confirmation.
-- Manual cloud smoke test remains advisable: upload evidence; generate a package twice; upload a signed package twice; reload the session and confirm the current paths/statuses and downloads. Do not test destructive cases against production data.
+- GitHub Actions passed for persistence hardening, atomic template processing, generated/signed path separation, and signed-PDF cache invalidation.
+- Manual cloud smoke test remains open: upload evidence; generate a package twice; upload a signed package twice; reload the session and confirm the current paths/statuses and downloads. Do not test destructive cases against production data.
 - Storage cleanup is best-effort: if Supabase removal fails, the application warns and can leave an orphaned object for later cleanup.
