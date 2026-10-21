@@ -142,8 +142,12 @@ def test_template_batch_discards_prior_pdfs_when_conversion_fails(monkeypatch):
 
     monkeypatch.setattr(documentos, "procesar_word", lambda data, context: b"rendered")
 
+    conversion_count = 0
+
     def convert(data, extension):
-        if data == b"bad-template":
+        nonlocal conversion_count
+        conversion_count += 1
+        if conversion_count == 2:
             raise RuntimeError("conversion failed")
         return b"pdf"
 
@@ -156,7 +160,7 @@ def test_template_batch_discards_prior_pdfs_when_conversion_fails(monkeypatch):
     pdfs, errors = documentos.procesar_plantillas_a_pdf(
         templates,
         {},
-        lambda path: b"bad-template" if path == "second.docx" else b"good-template",
+        lambda path: path.encode(),
     )
 
     assert pdfs == []
