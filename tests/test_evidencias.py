@@ -59,7 +59,7 @@ def test_compensation_failure_does_not_mask_persistence_failure():
             compensate,
         )
 
-    assert calls == ["upload", "compensate"] or calls == ["upload", "rollback", "compensate"]
+    assert calls == ["upload", "rollback", "compensate"]
 
 
 def test_successful_storage_upload_persists_without_compensation():
