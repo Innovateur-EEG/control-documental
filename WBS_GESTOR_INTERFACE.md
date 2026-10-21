@@ -83,3 +83,21 @@ Changes pushed to `dev`; they are not yet accepted as locally validated.
 ## Known verification boundary
 
 Unit tests do not prove that Supabase Storage, the configured database, Streamlit reruns, project-specific access, or generated documents work together. Keep the WBS open until the local acceptance checklist is complete.
+
+## Data integrity and persistence hardening
+
+**Scope:** evidence uploads, generated PDF packages, signed PDF packages, and package/delivery metadata. Work is incremental on `dev`; no broad refactor.
+
+### Implemented
+
+- Evidence uploads now remove the newly uploaded object if database persistence fails; the original error is preserved if rollback or cleanup also fails.
+- Generated packages use unique storage paths instead of overwriting the current package before the database commit. The previous generated/signed objects are removed only after the new metadata commits successfully.
+- Signed-package uploads use unique paths, preserve the generated-package reference, and remove the previous signed object only after the new metadata commits.
+- Failed database persistence triggers cleanup of the newly uploaded generated/signed object. Cleanup failures are surfaced as warnings rather than hiding the primary failure.
+- Regression tests cover upload failure, persistence failure, cleanup failure, and the success path for the shared upload/persist helper.
+
+### Still to verify
+
+- GitHub Actions must pass on the final persistence-hardening commit.
+- Manual cloud smoke test remains advisable: upload evidence; generate a package twice; upload a signed package twice; reload the session and confirm the current paths/statuses and downloads. Do not test destructive cases against production data.
+- Storage cleanup is best-effort: if Supabase removal fails, the application warns and can leave an orphaned object for later cleanup.
