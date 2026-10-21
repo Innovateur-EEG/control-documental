@@ -109,3 +109,58 @@ def test_template_batch_rejects_missing_and_unsupported_templates():
     assert len(errors) == 2
     assert "Sin archivo" in errors[0]
     assert "Formato antiguo" in errors[1]
+
+def test_template_batch_returns_all_pdfs_when_every_template_succeeds(monkeypatch):
+    from types import SimpleNamespace
+    import app.utils.documentos as documentos
+
+    calls = []
+    monkeypatch.setattr(documentos, "procesar_word", lambda data, context: b"word-rendered")
+    monkeypatch.setattr(documentos, "procesar_excel", lambda data, context: b"excel-rendered")
+    monkeypatch.setattr(
+        documentos,
+        "convertir_a_pdf",
+        lambda data, extension: calls.append((data, extension)) or b"pdf-" + extension.encode(),
+    )
+    templates = [
+        SimpleNamespace(nombre="Word", ruta_plantilla_word="one.docx"),
+        SimpleNamespace(nombre="Excel", ruta_plantilla_word="two.xlsx"),
+    ]
+
+    pdfs, errors = documentos.procesar_plantillas_a_pdf(
+        templates, {"nombre": "Prueba"}, lambda path: path.encode()
+    )
+
+    assert pdfs == [b"pdf-.docx", b"pdf-.xlsx"]
+    assert errors == []
+    assert calls == [(b"word-rendered", ".docx"), (b"excel-rendered", ".xlsx")]
+
+
+def test_template_batch_discards_prior_pdfs_when_conversion_fails(monkeypatch):
+    from types import SimpleNamespace
+    import app.utils.documentos as documentos
+
+    monkeypatch.setattr(documentos, "procesar_word", lambda data, context: b"rendered")
+
+    def convert(data, extension):
+        if data == b"bad-template":
+            raise RuntimeError("conversion failed")
+        return b"pdf"
+
+    monkeypatch.setattr(documentos, "convertir_a_pdf", convert)
+    templates = [
+        SimpleNamespace(nombre="Primera", ruta_plantilla_word="first.docx"),
+        SimpleNamespace(nombre="Segunda", ruta_plantilla_word="second.docx"),
+    ]
+
+    pdfs, errors = documentos.procesar_plantillas_a_pdf(
+        templates,
+        {},
+        lambda path: b"bad-template" if path == "second.docx" else b"good-template",
+    )
+
+    assert pdfs == []
+    assert len(errors) == 1
+    assert "Segunda" in errors[0]
+    assert "conversion failed" in errors[0]
+
