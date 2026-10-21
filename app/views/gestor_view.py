@@ -614,7 +614,12 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                             )
                             firmado_subido = True
                             metadata = dict(doc_exp.metadata_json or {})
-                            metadata["ruta_paquete_generado"] = metadata.get("ruta_paquete_generado") or doc_exp.ruta_archivo
+                            if not metadata.get("ruta_paquete_generado"):
+                                estados_con_ruta_firmada = {
+                                    "Firmado y Cargado", "Enviado Físicamente", "Recibido", "Validado Original"
+                                }
+                                if doc_exp.estatus not in estados_con_ruta_firmada:
+                                    metadata["ruta_paquete_generado"] = doc_exp.ruta_archivo
                             metadata["ruta_paquete_firmado"] = ruta_pdf
                             doc_exp.metadata_json = metadata
                             doc_exp.estatus = "Firmado y Cargado"
