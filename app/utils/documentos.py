@@ -107,6 +107,26 @@ def fusionar_pdfs(lista_pdfs_bytes: list) -> bytes:
     writer.write(out)
     return out.getvalue()
 
+
+ESTADOS_CON_RUTA_FIRMADA = {
+    "Firmado y Cargado",
+    "Enviado Físicamente",
+    "Recibido",
+    "Validado Original",
+}
+
+
+def obtener_ruta_paquete_generado(metadata: dict | None, ruta_archivo: str | None, estatus: str | None) -> str | None:
+    """Return the generated PDF path without mistaking a signed PDF for the generated one."""
+    metadata = metadata or {}
+    ruta_generada = metadata.get("ruta_paquete_generado")
+    if ruta_generada:
+        return ruta_generada
+    if estatus not in ESTADOS_CON_RUTA_FIRMADA:
+        return ruta_archivo
+    return None
+
+
 def procesar_plantillas_a_pdf(plantillas, context: dict, descargar):
     """Render and convert every configured template, rejecting partial packages.
 
