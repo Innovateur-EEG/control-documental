@@ -1,7 +1,7 @@
 # Gestor Interface Closure
 
 **Branch:** `dev`  
-**Implementation status:** Implementation and automated CI verification are green on `dev`; local/cloud end-to-end acceptance remains open.
+**Implementation status:** Atomic package processing and persistence hardening passed CI. A follow-up regression test and legacy generated/signed path correction have been committed; CI for this newest increment is still running. Local/cloud end-to-end acceptance remains open.
 
 ## Scope
 
@@ -17,6 +17,7 @@ This work closes the end-user (gestor) workflow without redesigning the applicat
 - Evidence uploads report failures cleanly and commit their database record only after storage upload succeeds.
 - Generated PDF packages are persisted in Supabase Storage and can be downloaded again after a new session.
 - Package generation now fails closed: if any configured template is missing, unsupported, fails to download/render, or fails PDF conversion, no partial package is returned or published.
+- Generated-package path resolution does not fall back to a legacy signed-file path when generated-path metadata is absent; this protects old signed records from misidentifying the signed PDF as the generated original.
 - Signed packages have a separate storage path; metadata preserves the generated-package path.
 - Signed-package upload is unavailable until a package record exists.
 - Removing access targets the selected user/person assignment; deleting a person clears the mapped association relationship.
@@ -79,7 +80,7 @@ Changes pushed to `dev`; they are not yet accepted as locally validated.
 - Signed package upload button now reads “Cargar/Adjuntar paquete firmado”; the signed-file link action reads “Generar link de descarga”.
 - Project manager receipt control was moved to the document progress dashboard, restricted to the project's Admin or SuperAdmin, and shown only for packages that have been sent. Gestor users are directed to the dashboard for receipt registration.
 - User records now have an optional name field so the delivery recipient can be displayed with name, email, and phone. Existing accounts will need their names filled in through “Directorio de Usuarios y Accesos”.
-- The latest GitHub Actions runs passed, including atomic template-batch regression tests. Local end-to-end validation remains required.
+- CI passed for the initial atomic template-processing changes. CI for the latest added batch-failure and legacy path-separation regression tests remains in progress. Local end-to-end validation remains required.
 
 ## Known verification boundary
 
@@ -99,6 +100,6 @@ Unit tests do not prove that Supabase Storage, the configured database, Streamli
 
 ### Still to verify
 
-- GitHub Actions passed for the persistence-hardening changes and the subsequent atomic template-processing changes.
+- GitHub Actions passed for persistence hardening and initial atomic template processing. Follow-up path-separation changes and their regression test are awaiting CI confirmation.
 - Manual cloud smoke test remains advisable: upload evidence; generate a package twice; upload a signed package twice; reload the session and confirm the current paths/statuses and downloads. Do not test destructive cases against production data.
 - Storage cleanup is best-effort: if Supabase removal fails, the application warns and can leave an orphaned object for later cleanup.
