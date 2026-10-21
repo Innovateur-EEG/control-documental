@@ -1,7 +1,7 @@
 # WBS 1.2 — Dynamic Capture Controls
 
 **Branch:** `dev`  
-**Status:** Implementation complete; dynamic-field logic has regression coverage in the full CI suite. Document-rendering coverage has been expanded for Word tables and Excel workbooks; latest CI result is pending. End-to-end UI verification remains pending.
+**Status:** Implementation and automated verification complete on `dev`. Latest CI passed after adding Word-table, Excel-workbook, and atomic template-batch regression tests. End-to-end UI verification remains pending.
 
 ## Scope delivered
 
@@ -44,7 +44,7 @@ Dependent options:
 
 ## Acceptance and deferred verification
 
-The implementation scope is complete on `dev`. The full CI suite passed during the persistence-hardening work; additional Word-table and Excel-workbook regression tests were then added, and their latest CI run must pass before treating this increment as verified. Manual UI regression checks remain pending.
+The implementation scope is complete on `dev`. The full CI suite passed after the Word-table and Excel-workbook regression tests were added. Subsequent atomic template-batch processing changes also passed CI. Manual UI regression checks remain pending.
 
 When online, run:
 
@@ -53,7 +53,7 @@ mise exec --command "python -m pytest tests/test_dynamic_fields.py -q"
 mise test
 ```
 
-Run the full suite and resolve failures before treating WBS 1.2 as technically accepted. Then perform a local UI check for:
+Automated verification is green on `dev`. Before treating the workflow as fully accepted, perform a local UI check for:
 1. A condition becoming true and false during editing.
 2. A dependent selection changing after its parent changes.
 3. An obsolete dependent selection being rejected on save.
