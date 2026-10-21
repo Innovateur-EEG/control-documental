@@ -51,3 +51,20 @@ def test_procesar_excel_renders_saved_capture_values_and_preserves_workbook_stru
     assert rendered["Captura"]["D4"].value == "=1+1"
     assert rendered["Captura"]["A1"].number_format == "@"
     assert rendered["Anexo"]["A1"].value == "Valor: 125.50"
+
+def test_procesar_word_renders_capture_values_inside_template_tables():
+    source = Document()
+    table = source.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "Representante"
+    table.cell(0, 1).text = "{{ representante }}"
+    input_bytes = BytesIO()
+    source.save(input_bytes)
+
+    rendered_bytes = procesar_word(
+        input_bytes.getvalue(),
+        {"representante": "Nombre guardado"},
+    )
+    rendered = Document(BytesIO(rendered_bytes))
+
+    assert rendered.tables[0].cell(0, 0).text == "Representante"
+    assert rendered.tables[0].cell(0, 1).text == "Nombre guardado"
