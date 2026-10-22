@@ -37,9 +37,8 @@ def dashboard_principal():
         if is_admin or is_super:
             tab_expedientes, tab_tablero, tab_config = st.tabs(["📋 Mis Expedientes", "📊 Tablero", "⚙️ Configuración"])
             render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyectos, mis_proy_ids)
-        else: 
-            tab_expedientes = st.container()
-            st.markdown("### 📋 Mis Expedientes")
+        else:
+            # The title is rendered once, inside render_gestor's container.
 
         # El gestor se renderiza para todos
         render_gestor(
