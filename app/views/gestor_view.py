@@ -23,18 +23,18 @@ def limpiar_nombre_archivo(nombre: str) -> str:
 
 def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
     with tab_expedientes:
-        st.subheader("Expedientes Asignados")
+        st.subheader("📋 Mis Expedientes")
         
         # --- SOLUCIÓN PUNTOS 1 y 4: Restaurar herencia ---
         personas_directas = [asig.persona for asig in user_actual.personas_asignadas] if user_actual else []
         personas_ids = [p.id for p in personas_directas]
         
-        part_directas = []
-        if personas_ids and allowed_project_ids != []:
-            query_directas = db.query(Participacion).filter(Participacion.persona_id.in_(personas_ids))
-            if allowed_project_ids is not None:
-                query_directas = query_directas.filter(Participacion.proyecto_id.in_(allowed_project_ids))
-            part_directas = query_directas.all()
+        # "Mis Expedientes" is driven by explicit user assignments, not the
+        # separate project-admin scope used by administrative tools.
+        part_directas = (
+            db.query(Participacion).filter(Participacion.persona_id.in_(personas_ids)).all()
+            if personas_ids else []
+        )
         part_directas_ids = [p.id for p in part_directas]
 
         # Build the hierarchy from participation IDs. The helper guards against cycles.
@@ -42,8 +42,6 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
         hierarchy_edges = [(rel.padre_id, rel.hijo_id) for rel in jerarquias]
         hijas_ids = descendant_participation_ids(part_directas_ids, hierarchy_edges)
         part_hijas_query = db.query(Participacion).filter(Participacion.id.in_(hijas_ids)) if hijas_ids else None
-        if part_hijas_query is not None and allowed_project_ids is not None:
-            part_hijas_query = part_hijas_query.filter(Participacion.proyecto_id.in_(allowed_project_ids))
         part_hijas = part_hijas_query.all() if part_hijas_query is not None else []
 
         # Combine direct assignments and descendants without duplicates.
