@@ -1,0 +1,105 @@
+PLANTILLA DE PRUEBAS JSON — CONTROL DOCUMENTAL
+================================================
+
+Instrucciones
+- Carga este archivo como plantilla de prueba si la interfaz acepta archivos de texto.
+- Para la prueba principal en Word, copia el contenido en un documento .docx y carga ese documento.
+- Cada bloque contiene etiqueta, descripción de una línea y la expresión Jinja para pegar en una plantilla.
+- Ejecuta primero: mise run db-seed-json-tests
+- Los campos de prueba se identifican con el prefijo "TEST JSON —".
+
+CAMPOS DINÁMICOS
+----------------
+
+Texto simple — Muestra el texto capturado.
+{{ test_json_plain_text }}
+
+Texto con restricciones — Comprueba placeholder y máximo de 40 caracteres.
+{{ test_json_text_constraints }}
+
+Número con límites — Comprueba un número entre 0 y 100 con pasos de 5.
+{{ test_json_number_bounds }}
+
+Valor predeterminado — Comprueba el valor inicial del campo.
+{{ test_json_default_value }}
+
+Campo obligatorio — Comprueba el campo marcado como requerido en el formulario.
+{{ test_json_required }}
+
+Casilla — Comprueba el valor booleano de una casilla.
+{{ test_json_checkbox }}
+
+Estado civil — Control para probar condiciones de visibilidad.
+{{ test_json_estado_civil }}
+
+Visible si casado — Debe mostrarse en el formulario cuando estado civil sea "Casado/a".
+{{ test_json_conditional_value }}
+
+Visible si soltero — Debe mostrarse en el formulario cuando estado civil sea "Soltero/a".
+{{ test_json_conditional_single }}
+
+Tipo de persona — Control para probar opciones dependientes.
+{{ test_json_tipo_persona }}
+
+Opciones dependientes — Las opciones cambian según el tipo de persona.
+{{ test_json_dependent_options }}
+
+Selección múltiple — Comprueba la salida de varias opciones seleccionadas.
+{{ test_json_multiple_selection }}
+
+Fecha — Muestra la fecha capturada.
+{{ test_json_date }}
+
+Configuración vacía — Comprueba el comportamiento de un campo sin configuración JSON adicional.
+{{ test_json_empty_config }}
+
+Configuración combinada — Prueba placeholder, máximo de caracteres, valor inicial y requerido.
+{{ test_json_combined }}
+
+FILTROS JINJA
+-------------
+
+mark — Marca con "X" si el valor coincide con el objetivo (comparación sin distinguir mayúsculas ni acentos).
+{{ test_json_estado_civil | mark("Casado/a") }}
+
+mark con marca personalizada — Devuelve ✓ en lugar de X cuando coincide.
+{{ test_json_estado_civil | mark("Casado/a", mark="✓") }}
+
+mark con valor por defecto — Usa "-" cuando no coincide o el valor está vacío.
+{{ test_json_estado_civil | mark("Casado/a", default="-") }}
+
+mark_not — Marca con "X" si el valor NO coincide con el objetivo; los valores vacíos nunca se marcan.
+{{ test_json_estado_civil | mark_not("Casado/a") }}
+
+mark con is_not — Forma alternativa para invertir la comparación.
+{{ test_json_estado_civil | mark("Casado/a", is_not=True) }}
+
+mark booleano — Si no se indica objetivo, marca cuando el valor es verdadero.
+{{ test_json_checkbox | mark }}
+
+prefix — Añade el prefijo indicado solo si el valor no está vacío.
+{{ test_json_plain_text | prefix("Dato: ") }}
+
+prefix con texto alternativo — Puede usarse para agregar etiquetas como "RFC: " o "Teléfono: ".
+{{ test_json_plain_text | prefix("RFC: ") }}
+
+Ejemplo de casillas — Coloca una X junto a la opción elegida.
+Soltero/a: {{ test_json_estado_civil | mark("Soltero/a") }}
+Casado/a: {{ test_json_estado_civil | mark("Casado/a") }}
+Otro estado: {{ test_json_estado_civil | mark_not(["Soltero/a", "Casado/a"]) }}
+
+NOTA SOBRE VIGENCIA DE EVIDENCIAS
+---------------------------------
+
+La configuración "vigencia" se muestra actualmente como texto informativo en la interfaz del gestor. Un número se muestra con la unidad "días"; otros valores se muestran como texto. Esta configuración no debe interpretarse como una validación automática de vencimiento sin implementar esa lógica por separado.
+
+Casos preparados por el seeder:
+- 30 (número de días)
+- 0
+- "Indefinida"
+- clave ausente
+- null
+- 2.5
+- true (booleano; no debe confundirse con un número de días)
+
+FIN DE LA PLANTILLA

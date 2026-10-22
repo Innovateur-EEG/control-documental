@@ -40,6 +40,7 @@ class Usuario(Base):
     __tablename__ = 'usuarios'
     id = Column(Integer, primary_key=True)
     email = Column(String, unique=True, nullable=False)
+    nombre = Column(String, nullable=True)
     password_hash = Column(String, nullable=True) 
     telefono = Column(String, nullable=True)
     tipo_usuario = Column(String, nullable=False) 
@@ -146,13 +147,15 @@ class ConfiguracionCampos(Base):
     tipo_persona = Column(String, nullable=False)    
     roles_aplica = Column(JSON, default=list)          
     regla_validacion = Column(String, nullable=True) 
+    configuracion_json = Column(JSON, nullable=False, default=dict)
 
 class ConfiguracionEvidencia(Base):
     __tablename__ = 'configuracion_evidencias'
     id = Column(Integer, primary_key=True)
     nombre_evidencia = Column(String, nullable=False) 
     tipo_persona = Column(String, nullable=False)     
-    roles_aplica = Column(JSON, default=list)           
+    roles_aplica = Column(JSON, default=list)
+    configuracion_json = Column(JSON, nullable=False, default=dict)           
 
 # ==========================================
 # CONFIGURACIÓN SEGURA (CACHEADA Y SCOPEADA)

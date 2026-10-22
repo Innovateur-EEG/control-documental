@@ -1,8 +1,24 @@
 import streamlit as st
+import json
 import pandas as pd
+import os
+import re
+import unicodedata
+import uuid
 from app.models.database import Usuario, Proyecto, Persona, Catalogo, Participacion, JerarquiaParticipacion, DocumentoExpediente, PlantillaFormato, ConfiguracionCampos, ConfiguracionEvidencia, UsuarioPersonaGestor, supabase_client
 from app.utils.auth import generar_hash
+from app.utils.gestor import EDIT_PERMISSION, descendant_participation_ids, effective_permission
+from app.utils.dynamic_fields import SUPPORTED_FIELD_TYPES, validate_field_config
 from sqlalchemy.orm.attributes import flag_modified
+
+
+def _storage_safe_filename(filename: str) -> str:
+    """Create an ASCII-only storage filename while preserving its extension."""
+    base, extension = os.path.splitext(os.path.basename(filename or "template"))
+    normalized = unicodedata.normalize("NFKD", base).encode("ascii", "ignore").decode("ascii")
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", normalized).strip("-.")
+    return f"{normalized or 'template'}{extension.lower()}"
+
 
 def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyectos, mis_proy_ids):
     # =========================================================
@@ -60,12 +76,95 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
         # ... (Código existente donde se renderiza la tabla del tablero de control) ...
             st.dataframe(df_tablero.style.map(color_estatus, subset=['Estatus Documental']), hide_index=True, use_container_width=True)
 
+            # Receipt can only be recorded by the project's Admin (or SuperAdmin)
+            # and only after the signed package has been physically sent.
+            st.markdown("#### Recepción de paquetes enviados")
+            paquetes_enviados = []
+            for part_receipt in participaciones:
+                doc_receipt = db.query(DocumentoExpediente).filter(
+                    DocumentoExpediente.participacion_id == part_receipt.id,
+                    DocumentoExpediente.tipo_documento == "Paquete Unificado",
+                ).first()
+                if not doc_receipt or doc_receipt.estatus not in ("Enviado Físicamente", "Recibido"):
+                    continue
+                es_responsable = is_super or any(
+                    admin.id == user_actual.id for admin in part_receipt.proyecto.admins
+                )
+                if es_responsable:
+                    paquetes_enviados.append((part_receipt, doc_receipt))
+
+            if not paquetes_enviados:
+                st.caption("No hay paquetes enviados pendientes de recepción para los proyectos que administras.")
+            for part_receipt, doc_receipt in paquetes_enviados:
+                col_info_recepcion, col_control_recepcion = st.columns([3, 2])
+                col_info_recepcion.write(
+                    f"**{part_receipt.proyecto.nombre}** — "
+                    f"{part_receipt.persona.razon_social_nombre}"
+                )
+                estado_recepcion = col_control_recepcion.selectbox(
+                    "Registrar recepción",
+                    options=["Pendiente de recepción", "Recibido"],
+                    index=1 if doc_receipt.estatus == "Recibido" else 0,
+                    key=f"dashboard_receipt_{doc_receipt.id}",
+                    disabled=doc_receipt.estatus == "Recibido",
+                )
+                if estado_recepcion == "Recibido" and doc_receipt.estatus == "Enviado Físicamente":
+                    doc_receipt.estatus = "Recibido"
+                    db.commit()
+                    st.rerun()
+
+        # Keep the status dashboard global, but expose individual details and exports
+        # only when the user has effective read/write permission for that participation.
+        if is_super:
+            participaciones_revision = participaciones
+        else:
+            asignaciones_directas = list(user_actual.personas_asignadas) if user_actual else []
+            direct_permissions = {
+                assignment.persona_id: assignment.nivel_permiso
+                for assignment in asignaciones_directas
+            }
+            personas_asignadas = set(direct_permissions)
+            if personas_asignadas and mis_proy_ids:
+                participaciones_directas = db.query(Participacion).filter(
+                    Participacion.persona_id.in_(personas_asignadas),
+                    Participacion.proyecto_id.in_(mis_proy_ids),
+                ).all()
+                raices_ids = [part.id for part in participaciones_directas]
+                jerarquias = db.query(JerarquiaParticipacion).all()
+                hierarchy_edges = [(rel.padre_id, rel.hijo_id) for rel in jerarquias]
+                descendientes_ids = descendant_participation_ids(
+                    raices_ids, hierarchy_edges
+                )
+                candidatos = db.query(Participacion).filter(
+                    Participacion.proyecto_id.in_(mis_proy_ids),
+                    Participacion.id.in_(set(raices_ids) | descendientes_ids),
+                ).all()
+
+                parents_by_child = {}
+                for parent_id, child_id in hierarchy_edges:
+                    parents_by_child.setdefault(child_id, []).append(parent_id)
+                participation_persona_ids = {
+                    part.id: part.persona_id for part in participaciones
+                }
+                participaciones_revision = [
+                    part for part in candidatos
+                    if effective_permission(
+                        part.id,
+                        part.persona_id,
+                        direct_permissions,
+                        parents_by_child,
+                        participation_persona_ids,
+                    ) == EDIT_PERMISSION
+                ]
+            else:
+                participaciones_revision = []
+
         # --- NUEVA SECCIÓN WBS 3.4.2: REVISIÓN DE EXPEDIENTES Y DESCARGA ---
         st.divider()
         st.subheader("🔍 Revisión de Expedientes Individuales")
         st.write("Seleccione un participante para revisar y descargar sus archivos de forma segura.")
         
-        part_opts = {p.id: f"[{p.proyecto.nombre}] {p.persona.razon_social_nombre} ({p.rol})" for p in participaciones}
+        part_opts = {p.id: f"[{p.proyecto.nombre}] {p.persona.razon_social_nombre} ({p.rol})" for p in participaciones_revision}
         if part_opts:
             part_sel_id = st.selectbox("Expediente a revisar:", options=list(part_opts.keys()), format_func=lambda x: part_opts[x])
             
@@ -97,9 +196,9 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
         with st.expander("📥 Exportar Base de Datos (Para Combinar Correspondencia)"):
             st.write("Descarga un archivo plano (CSV) con toda la información capturada de los participantes (incluyendo campos dinámicos) para usarlo en Microsoft Word u otros sistemas.")
             
-            if participaciones:
+            if participaciones_revision:
                 datos_export = []
-                for part in participaciones:
+                for part in participaciones_revision:
                     # Datos Relacionales Fijos
                     fila = {
                         "ID_Proyecto": part.proyecto.id,
@@ -412,7 +511,10 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                                 with col_btn_desv:
                                     if st.button("❌ Quitar Acceso", key="btn_desv_usr"):
                                         for p_obj in parts_objs_sel:
-                                            db.query(UsuarioPersonaGestor).filter_by(persona_id=p_obj.persona.id).delete()
+                                            db.query(UsuarioPersonaGestor).filter_by(
+                                                usuario_id=u_id,
+                                                persona_id=p_obj.persona.id,
+                                            ).delete()
                                             d_json = dict(p_obj.persona.datos_json or {})
                                             d_json.pop("permisos_usuarios", None)
                                             d_json.pop("permiso_hijas", None)
@@ -421,29 +523,79 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                                         st.success("Accesos desvinculados.")
                                         st.rerun()
 
-                    # 4. Formulario de Vinculación Rápida
-                    st.divider()
-                    with st.expander("➕ Vincular Persona / Entidad Existente al Proyecto", expanded=False):
-                        if roles_disponibles:
+                # 4. Formulario de Vinculación Rápida
+                # Limit Admins to entities already within their assigned-project
+                # scope, and exclude entities already linked to the target project.
+                st.divider()
+                with st.expander("➕ Vincular Persona / Entidad Existente al Proyecto", expanded=False):
+                    if not roles_disponibles:
+                        st.warning("No hay roles configurados en Catálogos. Agregue valores en 'Catálogos' antes de vincular personas.")
+                    elif not proyectos_activos:
+                        st.info("No hay proyectos disponibles para vincular personas.")
+                    else:
+                        proy_target = st.selectbox(
+                            "Proyecto destino:",
+                            options=[p.id for p in proyectos_activos],
+                            format_func=lambda x: proy_dict.get(x, ""),
+                            key="proy_target_vinculacion"
+                        )
+                        personas_ya_vinculadas = {
+                            persona_id for (persona_id,) in db.query(Participacion.persona_id).filter(
+                                Participacion.proyecto_id == proy_target
+                            ).all()
+                        }
+                        consulta_personas = db.query(Persona)
+                        if not is_super:
+                            consulta_personas = consulta_personas.filter(
+                                Persona.participaciones.any(
+                                    Participacion.proyecto_id.in_(mis_proy_ids)
+                                )
+                            )
+                        p_catalogo = consulta_personas.order_by(Persona.razon_social_nombre).all()
+                        p_catalogo = [
+                            persona for persona in p_catalogo
+                            if persona.id not in personas_ya_vinculadas
+                        ]
+
+                        if not p_catalogo:
+                            st.info("No hay entidades disponibles para vincular a este proyecto dentro de tu alcance.")
+                        else:
                             with st.form("form_vinc_exist"):
-                                proy_target = st.selectbox("Proyecto destino:", options=[p.id for p in proyectos_activos], format_func=lambda x: proy_dict.get(x, ""))
-                                p_catalogo = db.query(Persona).all()
-                                p_id_vinc = st.selectbox("Persona:", options=[p.id for p in p_catalogo], format_func=lambda x: next(f"{p.razon_social_nombre} ({p.tipo})" for p in p_catalogo if p.id == x))
+                                p_id_vinc = st.selectbox(
+                                    "Persona / Entidad disponible:",
+                                    options=[p.id for p in p_catalogo],
+                                    format_func=lambda x: next(
+                                        f"{p.razon_social_nombre} ({p.tipo})"
+                                        for p in p_catalogo if p.id == x
+                                    )
+                                )
                                 r_vinc = st.selectbox("Rol:", options=roles_disponibles)
                                 if st.form_submit_button("Vincular al Proyecto"):
-                                    if not db.query(Participacion).filter_by(proyecto_id=proy_target, persona_id=p_id_vinc).first():
-                                        db.add(Participacion(proyecto_id=proy_target, persona_id=p_id_vinc, rol=r_vinc))
-                                        db.commit()
-                                        st.rerun()
-                                    else:
-                                        st.warning("Esta persona ya está en ese proyecto.")
+                                    db.add(Participacion(
+                                        proyecto_id=proy_target,
+                                        persona_id=p_id_vinc,
+                                        rol=r_vinc
+                                    ))
+                                    db.commit()
+                                    st.rerun()
+
                 # =================================================================
                 # NUEVA SECCIÓN: CATÁLOGO DE PERSONAS (Editable con agregaciones)
                 # =================================================================
                 st.divider()
                 st.markdown("### 👥 Catálogo Maestro de Entidades y Personas")
                 
-                personas_query = db.query(Persona).all() if is_super else db.query(Persona).join(Participacion).filter(Participacion.proyecto_id.in_(mis_proy_ids)).distinct().all()
+                # Use EXISTS rather than DISTINCT over Persona rows: datos_json is
+                # PostgreSQL JSON, which does not support equality comparisons.
+                personas_query = (
+                    db.query(Persona).all()
+                    if is_super
+                    else db.query(Persona).filter(
+                        Persona.participaciones.any(
+                            Participacion.proyecto_id.in_(mis_proy_ids)
+                        )
+                    ).all()
+                )
                 
                 datos_pers = []
                 for p in personas_query:
@@ -508,7 +660,7 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                                         db.query(DocumentoExpediente).filter(DocumentoExpediente.participacion_id == part.id).delete()
                                         db.query(JerarquiaParticipacion).filter((JerarquiaParticipacion.padre_id == part.id) | (JerarquiaParticipacion.hijo_id == part.id)).delete()
                                         db.delete(part)
-                                    p_obj.gestores = []
+                                    p_obj.usuarios_asignados = []
                                     db.delete(p_obj)
                             db.commit()
                             st.success("Entidades y sus relaciones eliminadas exitosamente.")
@@ -525,120 +677,128 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                             db.commit()
                             st.rerun()
 
-                # =================================================================
-                # NUEVA SECCIÓN: DIRECTORIO DE USUARIOS (Editable)
-                # =================================================================
-                st.divider()
-                st.markdown("### 🔑 Directorio de Usuarios y Accesos")
-                st.write("Agregue nuevos usuarios en una fila vacía con el botón `+`, edite los existentes o seleccione casillas para eliminar / restablecer contraseña.")
-                
-                usuarios_lista = db.query(Usuario).order_by(Usuario.email).all()
-                datos_usr = []
-                for u in usuarios_lista:
-                    estatus_pwd = "⚠️ Temporal" if u.debe_cambiar_password == 1 else "✅ Activa"
-                    datos_usr.append({
-                        "Sel": False,
-                        "ID": u.id,
-                        "Correo": u.email,
-                        "Teléfono": u.telefono or "",
-                        "Estatus Contraseña": estatus_pwd,
-                        "Rol": u.tipo_usuario
-                    })
+                if is_super:
+                    # =================================================================
+                    # NUEVA SECCIÓN: DIRECTORIO DE USUARIOS (Editable)
+                    # =================================================================
+                    st.divider()
+                    st.markdown("### 🔑 Directorio de Usuarios y Accesos")
+                    st.write("Agregue nuevos usuarios en una fila vacía con el botón `+`, edite los existentes o seleccione casillas para eliminar / restablecer contraseña.")
                     
-                df_usr = pd.DataFrame(datos_usr) if datos_usr else pd.DataFrame(columns=["Sel", "ID", "Correo", "Teléfono", "Estatus Contraseña", "Rol"])
-                
-                # Para permitir inline-creation, el correo no debe estar en la lista de bloqueados
-                cols_usr_readonly = ["ID", "Estatus Contraseña"]
-                if not is_super:
-                    cols_usr_readonly.append("Rol")
-                    
-                df_usr_edit = st.data_editor(
-                    df_usr,
-                    num_rows="dynamic", # Habilita agregar filas con '+'
-                    hide_index=True,
-                    use_container_width=True,
-                    disabled=cols_usr_readonly,
-                    column_config={
-                        "Sel": st.column_config.CheckboxColumn("Seleccionar", default=False),
-                        "ID": None,
-                        "Correo": st.column_config.TextColumn("Correo (Editable)", required=True),
-                        "Rol": st.column_config.SelectboxColumn("Rol", options=["Usuario", "Admin", "SuperAdmin"], default="Usuario")
-                    },
-                    key="editor_usuarios_dir"
-                )
-                
-                col_ubtn1, col_ubtn2 = st.columns([1, 1])
-                with col_ubtn1:
-                    if st.button("💾 Guardar Cambios en Usuarios", key="btn_save_usrs"):
-                        for _, row in df_usr_edit.iterrows():
-                            val_id = row.get("ID")
-                            correo_u = str(row.get("Correo")).strip().lower()
-                            tel_u = row.get("Teléfono")
-                            rol_u = row.get("Rol") if pd.notna(row.get("Rol")) else "Usuario"
-                            
-                            if correo_u and correo_u != "nan":
-                                if pd.notna(val_id) and str(val_id).strip() != "":
-                                    # --- ACTUALIZAR EXISTENTE ---
-                                    u_obj = db.query(Usuario).filter(Usuario.id == int(val_id)).first()
-                                    if u_obj:
-                                        # Actualizar correo solo si no choca con otro existente
-                                        if u_obj.email != correo_u:
-                                            if not db.query(Usuario).filter(Usuario.email == correo_u).first():
-                                                u_obj.email = correo_u
-                                        u_obj.telefono = tel_u
-                                        if is_super:
-                                            u_obj.tipo_usuario = rol_u
-                                else:
-                                    # --- CREAR NUEVO (Inline) ---
-                                    if not db.query(Usuario).filter(Usuario.email == correo_u).first():
-                                        nuevo_u = Usuario(
-                                            email=correo_u,
-                                            telefono=tel_u,
-                                            password_hash=generar_hash("Temporal123!"),
-                                            tipo_usuario=rol_u if is_super else "Usuario",
-                                            debe_cambiar_password=1
-                                        )
-                                        db.add(nuevo_u)
-                        db.commit()
-                        st.success("Usuarios actualizados exitosamente.")
-                        st.rerun()
+                    usuarios_lista = db.query(Usuario).order_by(Usuario.email).all()
+                    datos_usr = []
+                    for u in usuarios_lista:
+                        estatus_pwd = "⚠️ Temporal" if u.debe_cambiar_password == 1 else "✅ Activa"
+                        datos_usr.append({
+                            "Sel": False,
+                            "ID": u.id,
+                            "Nombre": u.nombre or "",
+                            "Correo": u.email,
+                            "Teléfono": u.telefono or "",
+                            "Estatus Contraseña": estatus_pwd,
+                            "Rol": u.tipo_usuario
+                        })
                         
-                with col_ubtn2:
-                    usrs_sel_df = df_usr_edit[df_usr_edit["Sel"] == True]
-                    if not usrs_sel_df.empty:
-                        if st.button("🗑️ Eliminar Usuarios Seleccionados", type="primary"):
-                            for uid in usrs_sel_df["ID"].tolist():
-                                if pd.notna(uid):
-                                    u_obj = db.query(Usuario).filter(Usuario.id == int(uid)).first()
-                                    if u_obj:
-                                        if u_obj.id == st.session_state['usuario_id']:
-                                            st.error("No puedes eliminar tu propia sesión activa.")
-                                            continue
-                                            
-                                        u_obj.proyectos_admin = []
-                                        # Eliminamos las asignaciones de forma segura
-                                        db.query(UsuarioPersonaGestor).filter_by(usuario_id=u_obj.id).delete()
-                                        db.delete(u_obj)
+                    df_usr = pd.DataFrame(datos_usr) if datos_usr else pd.DataFrame(columns=["Sel", "ID", "Nombre", "Correo", "Teléfono", "Estatus Contraseña", "Rol"])
+                    
+                    # Para permitir inline-creation, el correo no debe estar en la lista de bloqueados
+                    cols_usr_readonly = ["ID", "Estatus Contraseña"]
+                    if not is_super:
+                        cols_usr_readonly.append("Rol")
+                        
+                    df_usr_edit = st.data_editor(
+                        df_usr,
+                        num_rows="dynamic", # Habilita agregar filas con '+'
+                        hide_index=True,
+                        use_container_width=True,
+                        disabled=cols_usr_readonly,
+                        column_config={
+                            "Sel": st.column_config.CheckboxColumn("Seleccionar", default=False),
+                            "ID": None,
+                            "Nombre": st.column_config.TextColumn("Nombre del responsable"),
+                            "Correo": st.column_config.TextColumn("Correo (Editable)", required=True),
+                            "Rol": st.column_config.SelectboxColumn("Rol", options=["Usuario", "Admin", "SuperAdmin"], default="Usuario")
+                        },
+                        key="editor_usuarios_dir"
+                    )
+                    
+                    col_ubtn1, col_ubtn2 = st.columns([1, 1])
+                    with col_ubtn1:
+                        if st.button("💾 Guardar Cambios en Usuarios", key="btn_save_usrs"):
+                            for _, row in df_usr_edit.iterrows():
+                                val_id = row.get("ID")
+                                correo_u = str(row.get("Correo")).strip().lower()
+                                nombre_raw = row.get("Nombre")
+                                nombre_u = "" if pd.isna(nombre_raw) else str(nombre_raw).strip()
+                                tel_u = row.get("Teléfono")
+                                rol_u = row.get("Rol") if pd.notna(row.get("Rol")) else "Usuario"
+                                
+                                if correo_u and correo_u != "nan":
+                                    if pd.notna(val_id) and str(val_id).strip() != "":
+                                        # --- ACTUALIZAR EXISTENTE ---
+                                        u_obj = db.query(Usuario).filter(Usuario.id == int(val_id)).first()
+                                        if u_obj:
+                                            # Actualizar correo solo si no choca con otro existente
+                                            if u_obj.email != correo_u:
+                                                if not db.query(Usuario).filter(Usuario.email == correo_u).first():
+                                                    u_obj.email = correo_u
+                                            u_obj.nombre = nombre_u or None
+                                            u_obj.telefono = tel_u
+                                            if is_super:
+                                                u_obj.tipo_usuario = rol_u
+                                    else:
+                                        # --- CREAR NUEVO (Inline) ---
+                                        if not db.query(Usuario).filter(Usuario.email == correo_u).first():
+                                            nuevo_u = Usuario(
+                                                email=correo_u,
+                                                nombre=nombre_u or None,
+                                                telefono=tel_u,
+                                                password_hash=generar_hash("Temporal123!"),
+                                                tipo_usuario=rol_u if is_super else "Usuario",
+                                                debe_cambiar_password=1
+                                            )
+                                            db.add(nuevo_u)
                             db.commit()
-                            st.success("Usuarios eliminados del sistema.")
+                            st.success("Usuarios actualizados exitosamente.")
                             st.rerun()
                             
-                # Reset Masivo de Contraseñas
-                if not usrs_sel_df.empty:
-                    with st.expander(f"🔑 Restablecer Contraseña ({len(usrs_sel_df)} usuarios seleccionados)", expanded=True):
-                        st.warning("Se sobrescribirá la contraseña actual. No olvide notificar a los usuarios.")
-                        nueva_pwd_temp = st.text_input("Nueva contraseña temporal:", value="Temporal123!")
-                        if st.button("Confirmar Restablecimiento Masivo", key="btn_reset_masivo_usr"):
-                            for uid in usrs_sel_df["ID"].tolist():
-                                if pd.notna(uid):
-                                    u_obj = db.query(Usuario).filter(Usuario.id == int(uid)).first()
-                                    if u_obj:
-                                        u_obj.password_hash = generar_hash(nueva_pwd_temp)
-                                        u_obj.debe_cambiar_password = 1
-                            db.commit()
-                            st.success("Contraseñas actualizadas.")
-                            st.rerun()
-        
+                    with col_ubtn2:
+                        usrs_sel_df = df_usr_edit[df_usr_edit["Sel"] == True]
+                        if not usrs_sel_df.empty:
+                            if st.button("🗑️ Eliminar Usuarios Seleccionados", type="primary"):
+                                for uid in usrs_sel_df["ID"].tolist():
+                                    if pd.notna(uid):
+                                        u_obj = db.query(Usuario).filter(Usuario.id == int(uid)).first()
+                                        if u_obj:
+                                            if u_obj.id == st.session_state['usuario_id']:
+                                                st.error("No puedes eliminar tu propia sesión activa.")
+                                                continue
+                                                
+                                            u_obj.proyectos_admin = []
+                                            # Eliminamos las asignaciones de forma segura
+                                            db.query(UsuarioPersonaGestor).filter_by(usuario_id=u_obj.id).delete()
+                                            db.delete(u_obj)
+                                db.commit()
+                                st.success("Usuarios eliminados del sistema.")
+                                st.rerun()
+                                
+                    # Reset Masivo de Contraseñas
+                    if not usrs_sel_df.empty:
+                        with st.expander(f"🔑 Restablecer Contraseña ({len(usrs_sel_df)} usuarios seleccionados)", expanded=True):
+                            st.warning("Se sobrescribirá la contraseña actual. No olvide notificar a los usuarios.")
+                            nueva_pwd_temp = st.text_input("Nueva contraseña temporal:", value="Temporal123!")
+                            if st.button("Confirmar Restablecimiento Masivo", key="btn_reset_masivo_usr"):
+                                for uid in usrs_sel_df["ID"].tolist():
+                                    if pd.notna(uid):
+                                        u_obj = db.query(Usuario).filter(Usuario.id == int(uid)).first()
+                                        if u_obj:
+                                            u_obj.password_hash = generar_hash(nueva_pwd_temp)
+                                            u_obj.debe_cambiar_password = 1
+                                db.commit()
+                                st.success("Contraseñas actualizadas.")
+                                st.rerun()
+            
+    
         if is_super:
             # =========================================================
             # -- PLANTILLAS --
@@ -666,7 +826,8 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                         if st.form_submit_button("Subir y Crear Plantilla"):
                             if nombre_tpl and roles_sel and archivo_tpl:
                                 # 1. Guardar el archivo físicamente EN SUPABASE STORAGE
-                                ruta_guardado = f"templates/{archivo_tpl.name}"
+                                nombre_storage = _storage_safe_filename(archivo_tpl.name)
+                                ruta_guardado = f"templates/{uuid.uuid4().hex[:8]}-{nombre_storage}"
                                 try:
                                     supabase_client.storage.from_("expedientes").upload(
                                         file=archivo_tpl.getvalue(),
@@ -693,186 +854,419 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                             else:
                                 st.error("El nombre, los roles y el archivo son obligatorios.")
                                 
-                # Listar y editar plantillas existentes (Mantenemos tu código anterior del st.data_editor aquí)
-                plantillas = db.query(PlantillaFormato).all()
+                # Template properties are edited once per document; signature assignments are separate rows.
+                plantillas = db.query(PlantillaFormato).order_by(PlantillaFormato.id).all()
                 if plantillas:
-                    st.write("**Configuración de Firmas por Documento:**")
+                    st.write("**Configuración de plantillas:**")
+                    st.caption("Edite nombre, roles aplicables y páginas totales una sola vez por documento.")
+                    etiqueta_original = {f"{tpl.id} — {tpl.nombre}": tpl for tpl in plantillas}
+                    df_plantillas = pd.DataFrame([
+                        {
+                            "ID": tpl.id,
+                            "Nombre": tpl.nombre,
+                            "Roles (coma)": ", ".join(tpl.roles_aplica or []),
+                            "Páginas totales": tpl.paginas_totales,
+                        }
+                        for tpl in plantillas
+                    ], columns=["ID", "Nombre", "Roles (coma)", "Páginas totales"])
+                    df_plantillas_editado = st.data_editor(
+                        df_plantillas,
+                        hide_index=True,
+                        use_container_width=True,
+                        key="editor_propiedades_plantillas",
+                        disabled=["ID"],
+                        column_config={
+                            "ID": st.column_config.NumberColumn("ID", disabled=True),
+                            "Nombre": st.column_config.TextColumn("Nombre", required=True),
+                            "Roles (coma)": st.column_config.TextColumn("Roles aplicables (separados por coma)", required=True),
+                            "Páginas totales": st.column_config.NumberColumn("Páginas totales", min_value=1, step=1, required=True),
+                        },
+                    )
+
+                    st.write("**Firmas por documento:**")
+                    st.caption("Cada fila representa una firma. Agregue o elimine filas aquí; eliminar todas las filas de un documento elimina todas sus firmas.")
+                    filas_firmas = []
                     for tpl in plantillas:
-                        with st.expander(f"📄 {tpl.nombre} (Aplica a: {', '.join(tpl.roles_aplica)})", expanded=True):
-                            st.caption(f"Archivo: {tpl.ruta_plantilla_word} | Longitud: {tpl.paginas_totales} págs.")
-                            # ... [Mantén aquí todo tu código actual del st.data_editor y el guardado de firmas] ...
-                            
-                            if tpl.firmas_json:
-                                df_firmas = pd.DataFrame(tpl.firmas_json)
-                            else:
-                                df_firmas = pd.DataFrame(columns=["pag_formato", "tipo_firma"])
-                            
-                            df_editado = st.data_editor(
-                                df_firmas,
-                                num_rows="dynamic",
-                                column_config={
-                                    "pag_formato": st.column_config.NumberColumn("Página (dentro de este formato)", min_value=1, max_value=tpl.paginas_totales, step=1, required=True),
-                                    "tipo_firma": st.column_config.SelectboxColumn("Tipo de Firma", options=["Firma Simple", "Nombre y Firma", "Nombre, Firma y Huella", "Solo Rúbrica"], required=True)
-                                },
-                                key=f"editor_firmas_{tpl.id}",
-                                use_container_width=True
-                            )
-                            
-                            # Controles de edición rápida
-                            col_a, col_b, col_c, col_d = st.columns([2, 1, 1, 1])
-                            with col_a:
-                                roles_validos = [r for r in (tpl.roles_aplica or []) if r in roles_disponibles]
-                                nuevos_roles = st.multiselect("Modificar Roles", options=roles_disponibles, default=roles_validos, key=f"roles_{tpl.id}")
-                            with col_b:
-                                nueva_pag = st.number_input("Modificar Páginas", min_value=1, value=tpl.paginas_totales, key=f"pags_{tpl.id}")
-                            with col_c:
-                                st.write("") 
-                                st.write("")
-                                if st.button("💾 Guardar", key=f"btn_save_{tpl.id}"):
-                                    tpl.roles_aplica = nuevos_roles
-                                    tpl.paginas_totales = nueva_pag
-                                    tpl.firmas_json = df_editado.to_dict(orient="records")
-                                    db.commit()
-                                    st.success("Configuración actualizada.")
-                                    st.rerun()
-                            with col_d:
-                                st.write("") 
-                                st.write("")
-                                if st.button("🗑️ Eliminar", key=f"btn_del_{tpl.id}"):
-                                    db.delete(tpl)
-                                    db.commit()
-                                    st.success("Plantilla eliminada.")
-                                    st.rerun()
-            
-            # =========================================================
-            # --- GESTOR DE CAMPOS Y EVIDENCIAS ---
+                        for firma in (tpl.firmas_json or []):
+                            filas_firmas.append({
+                                "Documento": f"{tpl.id} — {tpl.nombre}",
+                                "Página firma": firma.get("pag_formato"),
+                                "Tipo de firma": firma.get("tipo_firma"),
+                            })
+                    df_firmas = pd.DataFrame(filas_firmas, columns=[
+                        "Documento", "Página firma", "Tipo de firma"
+                    ])
+                    df_firmas_editado = st.data_editor(
+                        df_firmas,
+                        num_rows="dynamic",
+                        hide_index=True,
+                        use_container_width=True,
+                        key="editor_firmas_por_documento",
+                        column_config={
+                            "Documento": st.column_config.SelectboxColumn(
+                                "Documento", options=list(etiqueta_original), required=True
+                            ),
+                            "Página firma": st.column_config.NumberColumn(
+                                "Página firma", min_value=1, step=1, required=True
+                            ),
+                            "Tipo de firma": st.column_config.SelectboxColumn(
+                                "Tipo de firma",
+                                options=["Firma Simple", "Nombre y Firma", "Nombre, Firma y Huella", "Solo Rúbrica"],
+                                required=True,
+                            ),
+                        },
+                    )
+
+                    if st.button("💾 Guardar configuración de firmas", key="guardar_firmas_tabla"):
+                        try:
+                            propiedades = {}
+                            nombres_vistos = set()
+                            for _, fila in df_plantillas_editado.iterrows():
+                                tpl_id = int(fila["ID"])
+                                nombre = str(fila.get("Nombre") or "").strip()
+                                if not nombre:
+                                    raise ValueError("El nombre del documento es obligatorio.")
+                                if nombre.casefold() in nombres_vistos:
+                                    raise ValueError(f"El nombre de plantilla '{nombre}' está duplicado.")
+                                nombres_vistos.add(nombre.casefold())
+                                roles_raw = fila.get("Roles (coma)")
+                                roles = [
+                                    rol.strip() for rol in str(roles_raw or "").split(",") if rol.strip()
+                                ]
+                                paginas_raw = fila.get("Páginas totales")
+                                if pd.isna(paginas_raw) or int(paginas_raw) < 1:
+                                    raise ValueError(f"El documento '{nombre}' debe tener al menos una página.")
+                                propiedades[tpl_id] = {
+                                    "nombre": nombre,
+                                    "roles": roles,
+                                    "paginas": int(paginas_raw),
+                                }
+
+                            firmas_por_tpl = {tpl.id: [] for tpl in plantillas}
+                            for _, fila in df_firmas_editado.iterrows():
+                                etiqueta = fila.get("Documento")
+                                tpl = etiqueta_original.get(etiqueta)
+                                if tpl is None:
+                                    raise ValueError("Seleccione un documento válido para cada firma.")
+                                pagina_raw = fila.get("Página firma")
+                                tipo_raw = fila.get("Tipo de firma")
+                                if pd.isna(pagina_raw) or pd.isna(tipo_raw) or not str(tipo_raw).strip():
+                                    raise ValueError(f"Complete la página y el tipo de firma para '{tpl.nombre}'.")
+                                pagina = int(pagina_raw)
+                                paginas_doc = propiedades[tpl.id]["paginas"]
+                                if pagina < 1 or pagina > paginas_doc:
+                                    raise ValueError(
+                                        f"La página de firma de '{propiedades[tpl.id]['nombre']}' debe estar entre 1 y {paginas_doc}."
+                                    )
+                                firmas_por_tpl[tpl.id].append({
+                                    "pag_formato": pagina,
+                                    "tipo_firma": str(tipo_raw),
+                                })
+
+                            for tpl in plantillas:
+                                props = propiedades[tpl.id]
+                                tpl.nombre = props["nombre"]
+                                tpl.roles_aplica = props["roles"]
+                                tpl.paginas_totales = props["paginas"]
+                                # Every template is written, including empty lists, so removing all rows clears signatures.
+                                tpl.firmas_json = firmas_por_tpl[tpl.id]
+                            db.commit()
+                            st.success("Configuración de plantillas y firmas guardada.")
+                            st.rerun()
+                        except (ValueError, TypeError, KeyError) as exc:
+                            db.rollback()
+                            st.error(str(exc))
+
+                    col_delete, _ = st.columns([2, 5])
+                    with col_delete:
+                        plantilla_eliminar = st.selectbox(
+                            "Plantilla para eliminar",
+                            options=list(etiqueta_original),
+                            key="plantilla_firmas_eliminar",
+                        )
+                        if st.button("🗑️ Eliminar plantilla seleccionada", key="eliminar_plantilla_firmas"):
+                            db.delete(etiqueta_original[plantilla_eliminar])
+                            db.commit()
+                            st.success("Plantilla eliminada.")
+                            st.rerun()
+
+            # --- VARIABLES Y EVIDENCIAS: TABLAS CRUD ---
             # =========================================================
             with sub_vars:
-                st.subheader("Configuración de Variables y Evidencias")
-                st.write("Defina qué información (texto) y qué archivos (PDFs/Imágenes) se solicitarán dinámicamente a los usuarios.")
-                
-                
-                roles_disponibles = [c.valor for c in db.query(Catalogo).filter_by(categoria="Rol_Participacion").all()]
-                
-                col_izq, col_der = st.columns(2)
-                
-                with col_izq:
-                    st.markdown("### 1️⃣ Campos de Texto (Variables)")
-                    with st.expander("➕ Crear Nuevo Campo Obligatorio"):
-                        with st.form("form_nuevo_campo_dinamico"):
-                            nombre = st.text_input("Nombre a mostrar (Ej. CURP)")
-                            llave = st.text_input("Variable Jinja (Ej. curp)")
-                            tipo_input = st.selectbox("Tipo de Dato", ["Texto", "Fecha", "Número", "Opciones"])
-                            tipo_pers = st.selectbox("Aplica para:", ["Ambas", "Fisica", "Moral"], key="tp_campo")
-                            roles_sel = st.multiselect("Aplica a Roles:", options=roles_disponibles)
-                            opciones = st.text_input("Opciones (separadas por coma)")
-                            regla = st.selectbox("Regla de Validación", ["ninguna", "max_90_dias", "vigente_futuro"])
-                            
-                            if st.form_submit_button("Guardar Campo") and nombre and llave:
-                                opc_lista = [o.strip() for o in opciones.split(",")] if tipo_input == "Opciones" and opciones else []
-                                db.add(ConfiguracionCampos(
-                                    nombre_mostrar=nombre, llave_jinja=llave.lower().replace(" ", "_"),
-                                    tipo_input=tipo_input, opciones_json=opc_lista, tipo_persona=tipo_pers,
-                                    roles_aplica=roles_sel, regla_validacion=regla
-                                ))
-                                db.commit()
-                                st.rerun()
+                st.subheader("Variables y evidencias")
+                st.caption("Edite los valores directamente en las tablas. Use + para agregar filas; elimine filas desde el editor. Los cambios se aplican al guardar.")
 
-                    # Lista de Campos
-                    campos_registrados = db.query(ConfiguracionCampos).all()
-                    for c in campos_registrados:
-                        with st.expander(f"📌 {c.nombre_mostrar} `{{{{{c.llave_jinja}}}}}`"):
-                            st.write(f"Input: {c.tipo_input} | Persona: {c.tipo_persona}")
-                            if st.button("🗑️ Eliminar", key=f"del_campo_txt_{c.id}"):
-                                db.delete(c)
-                                db.commit()
-                                st.rerun()
+                roles_disponibles = [
+                    c.valor for c in db.query(Catalogo)
+                    .filter_by(categoria="Rol_Participacion").all()
+                ]
+                tipos_persona = ["Ambas", "Fisica", "Moral"]
+                tipos_campo = list(SUPPORTED_FIELD_TYPES)
+                reglas_validacion = ["ninguna", "max_90_dias", "vigente_futuro"]
 
-                with col_der:
-                    st.markdown("### 2️⃣ Evidencias Adjuntas (Archivos)")
-                    with st.expander("➕ Crear Nueva Evidencia Requerida"):
-                        with st.form("form_nueva_evidencia"):
-                            nombre_evidencia = st.text_input("Nombre del Documento (Ej. Identificación Oficial)")
-                            tipo_pers_ev = st.selectbox("Aplica para:", ["Ambas", "Fisica", "Moral"], key="tp_evidencia")
-                            roles_sel_ev = st.multiselect("Aplica a Roles:", options=roles_disponibles, key="roles_ev")
-                            
-                            if st.form_submit_button("Guardar Evidencia") and nombre_evidencia:
-                                db.add(ConfiguracionEvidencia(
-                                    nombre_evidencia=nombre_evidencia,
-                                    tipo_persona=tipo_pers_ev,
-                                    roles_aplica=roles_sel_ev
-                                ))
-                                db.commit()
-                                st.rerun()
+                # --- Campos / variables ---
+                st.markdown("### Variables del formulario")
+                campos_registrados = db.query(ConfiguracionCampos).order_by(
+                    ConfiguracionCampos.id
+                ).all()
+                df_campos = pd.DataFrame([
+                    {
+                        "ID": c.id,
+                        "Nombre": c.nombre_mostrar,
+                        "Variable Jinja": c.llave_jinja,
+                        "Tipo": c.tipo_input,
+                        "Opciones (coma)": ", ".join(c.opciones_json or []),
+                        "Tipo persona": c.tipo_persona,
+                        "Roles (coma)": ", ".join(c.roles_aplica or []),
+                        "Validación": c.regla_validacion or "ninguna",
+                        "Configuración JSON": json.dumps(
+                            c.configuracion_json or {}, ensure_ascii=False
+                        ),
+                    }
+                    for c in campos_registrados
+                ], columns=[
+                    "ID", "Nombre", "Variable Jinja", "Tipo", "Opciones (coma)",
+                    "Tipo persona", "Roles (coma)", "Validación", "Configuración JSON"
+                ])
 
-                    # Lista de Evidencias
-                    evidencias_registradas = db.query(ConfiguracionEvidencia).all()
-                    for ev in evidencias_registradas:
-                        with st.expander(f"📎 {ev.nombre_evidencia}"):
-                            st.write(f"Persona: {ev.tipo_persona} | Roles: {', '.join(ev.roles_aplica) if ev.roles_aplica else 'Todos'}")
-                            if st.button("🗑️ Eliminar", key=f"del_ev_adj_{ev.id}"):
-                                db.delete(ev)
-                                db.commit()
-                                st.rerun()
-                
+                df_campos_editado = st.data_editor(
+                    df_campos,
+                    num_rows="dynamic",
+                    hide_index=True,
+                    use_container_width=True,
+                    key="variables_crud_editor",
+                    disabled=["ID"],
+                    column_config={
+                        "ID": st.column_config.NumberColumn("ID", disabled=True),
+                        "Nombre": st.column_config.TextColumn("Nombre", required=True),
+                        "Variable Jinja": st.column_config.TextColumn("Variable Jinja", required=True),
+                        "Tipo": st.column_config.SelectboxColumn(
+                            "Tipo", options=tipos_campo, required=True
+                        ),
+                        "Tipo persona": st.column_config.SelectboxColumn(
+                            "Tipo persona", options=tipos_persona, required=True
+                        ),
+                        "Validación": st.column_config.SelectboxColumn(
+                            "Validación", options=reglas_validacion
+                        ),
+                        "Configuración JSON": st.column_config.TextColumn(
+                            "Configuración JSON", width="large"
+                        ),
+                    },
+                )
+                if st.button("Guardar cambios de variables", key="guardar_variables_crud"):
+                    try:
+                        rows = df_campos_editado.to_dict("records")
+                        existentes = {c.id: c for c in campos_registrados}
+                        ids_presentes = set()
+                        cambios = []
+                        for numero_fila, row in enumerate(rows, start=1):
+                            nombre = str(row.get("Nombre") or "").strip()
+                            llave = str(row.get("Variable Jinja") or "").strip().lower().replace(" ", "_")
+                            tipo = str(row.get("Tipo") or "").strip()
+                            tipo_persona = str(row.get("Tipo persona") or "").strip()
+                            opciones_txt = str(row.get("Opciones (coma)") or "").strip()
+                            roles_txt = str(row.get("Roles (coma)") or "").strip()
+                            regla = str(row.get("Validación") or "ninguna").strip()
+                            config_txt = str(row.get("Configuración JSON") or "{}").strip() or "{}"
+                            id_val = row.get("ID")
+                            id_registro = None if pd.isna(id_val) else int(id_val)
 
-                # --- GESTOR DE CAMPOS Y VALIDACIONES ---
-                st.subheader("Configuración de Campos y Validaciones")
-                st.write("Defina qué información se solicitará a los usuarios en el portal, la etiqueta Jinja que la vinculará a Word/Excel, y si requiere pasar por una regla matemática.")
-                
-                roles_disponibles = [c.valor for c in db.query(Catalogo).filter_by(categoria="Rol_Participacion").all()]
-                
-                with st.expander("➕ Crear Nuevo Campo Obligatorio"):
-                    with st.form("form_nuevo_campo"):
-                        col1, col2 = st.columns(2)
-                        nombre = col1.text_input("Nombre a mostrar en formulario (Ej. Fecha de Comprobante)")
-                        llave = col2.text_input("Variable en Plantilla (Ej. fecha_comprobante)")
-                        
-                        col3, col4 = st.columns(2)
-                        tipo_input = col3.selectbox("Tipo de Dato (Input)", ["Texto", "Fecha", "Número", "Opciones"])
-                        tipo_pers = col4.selectbox("Aplica para el tipo de persona:", ["Ambas", "Fisica", "Moral"])
-                        
-                        roles_sel = st.multiselect("Aplica a los Roles:", options=roles_disponibles, help="Si lo dejas vacío, se le pedirá a todos los roles.")
-                        
-                        col5, col6 = st.columns(2)
-                        opciones = col5.text_input("Opciones (Separadas por coma, solo si elegiste 'Opciones')")
-                        regla = col6.selectbox("Regla de Validación Matemática", ["ninguna", "max_90_dias (Antigüedad)", "vigente_futuro (Caducidad)"])
-                        
-                        if st.form_submit_button("Guardar Campo"):
-                            if nombre and llave:
-                                opc_lista = [o.strip() for o in opciones.split(",")] if tipo_input == "Opciones" and opciones else []
-                                nuevo_campo = ConfiguracionCampos(
-                                    nombre_mostrar=nombre,
-                                    llave_jinja=llave.lower().replace(" ", "_"),
-                                    tipo_input=tipo_input,
-                                    opciones_json=opc_lista,
-                                    tipo_persona=tipo_pers,
-                                    roles_aplica=roles_sel,
-                                    regla_validacion=regla.split(" ")[0] # Guardamos solo la llave ("max_90_dias")
-                                )
-                                db.add(nuevo_campo)
-                                db.commit()
-                                st.success("Campo creado exitosamente.")
-                                st.rerun()
-                            else:
-                                st.error("El nombre y la variable Jinja son obligatorios.")
+                            fila_vacia = not any([
+                                nombre, llave, opciones_txt, roles_txt,
+                                config_txt not in ("{}", "nan", "None"),
+                            ]) and not id_registro
+                            if fila_vacia:
+                                continue
+                            if not nombre or not llave:
+                                raise ValueError(f"Fila {numero_fila}: Nombre y Variable Jinja son obligatorios.")
+                            if tipo not in tipos_campo:
+                                raise ValueError(f"Fila {numero_fila}: Tipo de campo no válido.")
+                            if tipo_persona not in tipos_persona:
+                                raise ValueError(f"Fila {numero_fila}: Tipo persona no válido.")
+                            if regla not in reglas_validacion:
+                                raise ValueError(f"Fila {numero_fila}: Regla de validación no válida.")
+                            try:
+                                config_json = json.loads(config_txt)
+                            except json.JSONDecodeError as exc:
+                                raise ValueError(f"Fila {numero_fila}: Configuración JSON inválida ({exc.msg}).")
+                            if not isinstance(config_json, dict):
+                                raise ValueError(f"Fila {numero_fila}: Configuración JSON debe ser un objeto.")
+                            try:
+                                validate_field_config(tipo, config_json)
+                            except ValueError as exc:
+                                raise ValueError(
+                                    f"Fila {numero_fila}: Configuración de campo inválida ({exc})."
+                                ) from exc
+                            if id_registro is not None and id_registro not in existentes:
+                                raise ValueError(f"Fila {numero_fila}: ID de registro desconocido.")
+                            if id_registro is not None:
+                                ids_presentes.add(id_registro)
+                            cambios.append({
+                                "id": id_registro,
+                                "nombre": nombre,
+                                "llave": llave,
+                                "tipo": tipo,
+                                "opciones": [v.strip() for v in opciones_txt.split(",") if v.strip()],
+                                "tipo_persona": tipo_persona,
+                                "roles": [v.strip() for v in roles_txt.split(",") if v.strip()],
+                                "regla": regla,
+                                "config": config_json,
+                            })
 
-                # Listado de Campos
-                campos_registrados = db.query(ConfiguracionCampos).all()
-                if campos_registrados:
-                    st.write("**Catálogo de Campos Configurados:**")
-                    for c in campos_registrados:
-                        with st.expander(f"📌 {c.nombre_mostrar} `{{{{{c.llave_jinja}}}}}`"):
-                            st.write(f"**Input:** {c.tipo_input} | **Aplica a:** {c.tipo_persona} | **Validación:** {c.regla_validacion}")
-                            st.write(f"**Roles Específicos:** {', '.join(c.roles_aplica) if c.roles_aplica else 'Todos los roles'}")
-                            if c.opciones_json:
-                                st.write(f"**Valores:** {', '.join(c.opciones_json)}")
-                                
-                            if st.button("🗑️ Eliminar", key=f"del_campo_{c.id}"):
-                                db.delete(c)
-                                db.commit()
-                                st.rerun()
-            
+                        llaves = [item["llave"] for item in cambios]
+                        if len(llaves) != len(set(llaves)):
+                            raise ValueError("Cada Variable Jinja debe ser única.")
+                        for item in cambios:
+                            registro = existentes.get(item["id"]) if item["id"] is not None else ConfiguracionCampos()
+                            registro.nombre_mostrar = item["nombre"]
+                            registro.llave_jinja = item["llave"]
+                            registro.tipo_input = item["tipo"]
+                            registro.opciones_json = item["opciones"]
+                            registro.tipo_persona = item["tipo_persona"]
+                            registro.roles_aplica = item["roles"]
+                            registro.regla_validacion = item["regla"]
+                            registro.configuracion_json = item["config"]
+                            if item["id"] is None:
+                                db.add(registro)
+                        for registro_id, registro in existentes.items():
+                            if registro_id not in ids_presentes:
+                                db.delete(registro)
+                        db.commit()
+                        st.success("Variables guardadas.")
+                        st.rerun()
+                    except (ValueError, TypeError) as exc:
+                        db.rollback()
+                        st.error(str(exc))
+                    except Exception as exc:
+                        db.rollback()
+                        st.error(f"No se pudieron guardar las variables: {exc}")
+
+                st.caption("Opciones y roles se capturan separados por comas. La configuración JSON puede dejarse como {} si no se requieren reglas adicionales.")
+
+                # --- Evidencias ---
+                st.markdown("### Evidencias adjuntas")
+                evidencias_registradas = db.query(ConfiguracionEvidencia).order_by(
+                    ConfiguracionEvidencia.id
+                ).all()
+                df_evidencias = pd.DataFrame([
+                    {
+                        "ID": e.id,
+                        "Nombre de evidencia": e.nombre_evidencia,
+                        "Tipo persona": e.tipo_persona,
+                        "Roles (coma)": ", ".join(e.roles_aplica or []),
+                        "Configuración JSON": json.dumps(
+                            e.configuracion_json or {}, ensure_ascii=False
+                        ),
+                    }
+                    for e in evidencias_registradas
+                ], columns=[
+                    "ID", "Nombre de evidencia", "Tipo persona", "Roles (coma)",
+                    "Configuración JSON"
+                ])
+
+                df_evidencias_editado = st.data_editor(
+                    df_evidencias,
+                    num_rows="dynamic",
+                    hide_index=True,
+                    use_container_width=True,
+                    key="evidencias_crud_editor",
+                    disabled=["ID"],
+                    column_config={
+                        "ID": st.column_config.NumberColumn("ID", disabled=True),
+                        "Nombre de evidencia": st.column_config.TextColumn(
+                            "Nombre de evidencia", required=True
+                        ),
+                        "Tipo persona": st.column_config.SelectboxColumn(
+                            "Tipo persona", options=tipos_persona, required=True
+                        ),
+                        "Configuración JSON": st.column_config.TextColumn(
+                            "Configuración JSON", width="large"
+                        ),
+                    },
+                )
+                if st.button("Guardar cambios de evidencias", key="guardar_evidencias_crud"):
+                    try:
+                        rows = df_evidencias_editado.to_dict("records")
+                        existentes = {e.id: e for e in evidencias_registradas}
+                        ids_presentes = set()
+                        cambios = []
+                        for numero_fila, row in enumerate(rows, start=1):
+                            nombre = str(row.get("Nombre de evidencia") or "").strip()
+                            tipo_persona = str(row.get("Tipo persona") or "").strip()
+                            roles_txt = str(row.get("Roles (coma)") or "").strip()
+                            config_txt = str(row.get("Configuración JSON") or "{}").strip() or "{}"
+                            id_val = row.get("ID")
+                            id_registro = None if pd.isna(id_val) else int(id_val)
+                            if not nombre and not roles_txt and config_txt in ("{}", "nan", "None") and not id_registro:
+                                continue
+                            if not nombre:
+                                raise ValueError(f"Fila {numero_fila}: el nombre de evidencia es obligatorio.")
+                            if tipo_persona not in tipos_persona:
+                                raise ValueError(f"Fila {numero_fila}: Tipo persona no válido.")
+                            if id_registro is not None and id_registro not in existentes:
+                                raise ValueError(f"Fila {numero_fila}: ID de evidencia desconocido.")
+                            try:
+                                config_json = json.loads(config_txt)
+                            except json.JSONDecodeError as exc:
+                                raise ValueError(f"Fila {numero_fila}: Configuración JSON inválida ({exc.msg}).")
+                            if not isinstance(config_json, dict):
+                                raise ValueError(f"Fila {numero_fila}: Configuración JSON debe ser un objeto.")
+                            if "vigencia" in config_json and not isinstance(config_json["vigencia"], (str, int, float, type(None))):
+                                raise ValueError(f"Fila {numero_fila}: 'vigencia' debe ser texto, número o null.")
+                            if id_registro is not None:
+                                ids_presentes.add(id_registro)
+                            cambios.append({
+                                "id": id_registro,
+                                "nombre": nombre,
+                                "tipo_persona": tipo_persona,
+                                "roles": [v.strip() for v in roles_txt.split(",") if v.strip()],
+                                "config": config_json,
+                            })
+                        nombres = [item["nombre"].casefold() for item in cambios]
+                        if len(nombres) != len(set(nombres)):
+                            raise ValueError("Cada nombre de evidencia debe ser único.")
+
+                        # Evidence documents are associated by document name, not by a foreign key.
+                        # Block renames/deletions that would make existing uploads disappear from the UI.
+                        for registro_id, registro in existentes.items():
+                            item_actualizado = next(
+                                (item for item in cambios if item["id"] == registro_id), None
+                            )
+                            nombre_nuevo = item_actualizado["nombre"] if item_actualizado else None
+                            if nombre_nuevo != registro.nombre_evidencia:
+                                evidencia_en_uso = db.query(DocumentoExpediente).filter_by(
+                                    categoria_documento="Evidencia_Adjunta",
+                                    tipo_documento=registro.nombre_evidencia,
+                                ).first()
+                                if evidencia_en_uso:
+                                    raise ValueError(
+                                        f"No se puede renombrar o eliminar '{registro.nombre_evidencia}' "
+                                        "porque ya tiene archivos registrados. Mantenga el nombre actual "
+                                        "para conservar la trazabilidad de esos archivos."
+                                    )
+
+                        for item in cambios:
+                            registro = existentes.get(item["id"]) if item["id"] is not None else ConfiguracionEvidencia()
+                            registro.nombre_evidencia = item["nombre"]
+                            registro.tipo_persona = item["tipo_persona"]
+                            registro.roles_aplica = item["roles"]
+                            registro.configuracion_json = item["config"]
+                            if item["id"] is None:
+                                db.add(registro)
+                        for registro_id, registro in existentes.items():
+                            if registro_id not in ids_presentes:
+                                db.delete(registro)
+                        db.commit()
+                        st.success("Evidencias guardadas.")
+                        st.rerun()
+                    except (ValueError, TypeError) as exc:
+                        db.rollback()
+                        st.error(str(exc))
+                    except Exception as exc:
+                        db.rollback()
+                        st.error(f"No se pudieron guardar las evidencias: {exc}")
+
             # =========================================================
             # --- VARIABLES DE SISTEMA ---
             # =========================================================

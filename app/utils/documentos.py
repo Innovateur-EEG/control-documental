@@ -4,23 +4,25 @@ import platform
 import tempfile
 import subprocess
 import openpyxl
+from jinja2 import Environment
 from pypdf import PdfReader, PdfWriter
 from docxtpl import DocxTemplate
+from app.utils.template_filters import mark_filter, mark_not_filter, prefix_filter
 
 def procesar_excel(file_bytes: bytes, context: dict) -> bytes:
-    """Abre un Excel en memoria, busca las etiquetas {{llave}} y las reemplaza"""
+    """Render Jinja expressions inside Excel string cells and preserve workbook layout."""
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
-    
+    env = Environment()
+    env.filters["mark"] = mark_filter
+    env.filters["mark_not"] = mark_not_filter
+    env.filters["prefix"] = prefix_filter
+
     for sheet in wb.worksheets:
         for row in sheet.iter_rows():
             for cell in row:
-                if cell.value and isinstance(cell.value, str):
-                    # Si detecta formato Jinja, intenta reemplazar con el contexto
-                    for key, val in context.items():
-                        tag = f"{{{{{key}}}}}" # Equivale a {{key}}
-                        if tag in cell.value:
-                            cell.value = cell.value.replace(tag, str(val))
-                            
+                if isinstance(cell.value, str) and "{{" in cell.value and "}}" in cell.value:
+                    cell.value = env.from_string(cell.value).render(context)
+
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
@@ -28,7 +30,11 @@ def procesar_excel(file_bytes: bytes, context: dict) -> bytes:
 def procesar_word(file_bytes: bytes, context: dict) -> bytes:
     """Renderiza la plantilla Word usando Jinja2"""
     doc = DocxTemplate(io.BytesIO(file_bytes))
-    doc.render(context)
+    env = Environment()
+    env.filters["mark"] = mark_filter
+    env.filters["mark_not"] = mark_not_filter
+    env.filters["prefix"] = prefix_filter
+    doc.render(context, jinja_env=env)
     out = io.BytesIO()
     doc.save(out)
     return out.getvalue()
@@ -100,3 +106,66 @@ def fusionar_pdfs(lista_pdfs_bytes: list) -> bytes:
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()
+
+
+ESTADOS_CON_RUTA_FIRMADA = {
+    "Firmado y Cargado",
+    "Enviado Físicamente",
+    "Recibido",
+    "Validado Original",
+}
+
+
+def obtener_ruta_paquete_generado(metadata: dict | None, ruta_archivo: str | None, estatus: str | None) -> str | None:
+    """Return the generated PDF path without mistaking a signed PDF for the generated one."""
+    metadata = metadata or {}
+    ruta_generada = metadata.get("ruta_paquete_generado")
+    if ruta_generada:
+        return ruta_generada
+    if estatus not in ESTADOS_CON_RUTA_FIRMADA:
+        return ruta_archivo
+    return None
+
+
+
+def limpiar_metadatos_reinicio_paquete(metadata: dict | None) -> tuple[dict, str | None]:
+    """Clear signed-package and delivery state while preserving the generated original."""
+    cleaned = dict(metadata or {})
+    ruta_firmado = cleaned.pop("ruta_paquete_firmado", None)
+    for key in (
+        "nombre_paquete_firmado", "fecha_carga_paquete_firmado",
+        "metodo", "fecha_envio", "empresa", "guia", "responsables_proyecto",
+    ):
+        cleaned.pop(key, None)
+    return cleaned, ruta_firmado
+
+
+def procesar_plantillas_a_pdf(plantillas, context: dict, descargar):
+    """Render and convert every configured template, rejecting partial packages.
+
+    Returns (pdfs, errors). If any template fails, pdfs is empty so callers
+    cannot accidentally publish an incomplete package.
+    """
+    pdfs = []
+    errors = []
+    for plantilla in plantillas:
+        nombre = getattr(plantilla, "nombre", "Plantilla sin nombre")
+        ruta = getattr(plantilla, "ruta_plantilla_word", None)
+        if not ruta:
+            errors.append(f"'{nombre}': no tiene una plantilla configurada.")
+            continue
+        extension = os.path.splitext(ruta)[1].lower()
+        try:
+            if extension not in (".docx", ".xlsx"):
+                raise ValueError(f"formato de plantilla no soportado: {extension or 'sin extensión'}")
+            file_bytes = descargar(ruta)
+            rendered = procesar_word(file_bytes, context) if extension == ".docx" else procesar_excel(file_bytes, context)
+            if not rendered:
+                raise ValueError("el renderizador no produjo un documento.")
+            pdf = convertir_a_pdf(rendered, extension)
+            if not pdf:
+                raise ValueError("la conversión a PDF no produjo contenido.")
+            pdfs.append(pdf)
+        except Exception as exc:
+            errors.append(f"'{nombre}': {exc}")
+    return ([], errors) if errors else (pdfs, [])
