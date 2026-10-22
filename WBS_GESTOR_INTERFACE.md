@@ -7,7 +7,7 @@
 
 This work closes the end-user (gestor) workflow without redesigning the application or changing the existing metadata-driven capture configuration.
 
-- Project administrators see only participations in their assigned projects in the Gestor workflow, individual-file review, export tools, and the entity catalog; SuperAdmin project scope remains global.
+- Project administrators are scoped to their assigned projects in individual-file review, export tools, and the entity catalog; SuperAdmin scope remains global. “Mis Expedientes” is independent of Admin project scope and shows direct user assignments plus descendants.
 - The document-progress dashboard remains global for Admin and SuperAdmin, by explicit requirement.
 - Entity catalog scoping uses an EXISTS-style relationship filter, not DISTINCT over the full Persona row, because PostgreSQL JSON columns do not support equality comparisons.
 - Direct assignments take precedence; inherited permissions resolve through the nearest assigned ancestor.
@@ -38,7 +38,7 @@ mise test
 Use a non-production test project and accounts. Do not validate destructive actions against production data.
 
 1. A Gestor with no assignments sees the empty-state message.
-2. A directly assigned person appears in the correct project; a project Admin does not see that person's participation in another project they do not administer. Confirm this restriction in the Gestor view, “Revisión de Expedientes Individuales,” “Herramientas de Exportación,” and the entity catalog. Confirm “Tablero de Avance Documental” still shows all projects.
+2. Confirm “Mis Expedientes” displays direct assignments and descendants independently of Admin project scope. Separately, confirm project Admin scope in “Revisión de Expedientes Individuales,” “Herramientas de Exportación,” and the entity catalog; confirm “Tablero de Avance Documental” remains global.
 3. A descendant of an assigned person appears; nested descendants inherit the nearest assigned ancestor's permission.
 4. A read-only user can inspect and download existing material but cannot save capture data, upload evidence, generate a package, upload a signed package, or change traceability.
 5. **How to test:** use a writable test user and a test entity with at least one field controlled by `visible_if`. Record the current value of that conditional field and one unrelated field. Change the controlling field so the conditional field disappears, save, then change the condition back so it reappears. Verify its prior value is preserved. Change and save one unrelated field too, and verify that value persists after rerun/reopening the entity. If no conditional field is configured, create a temporary test configuration first; do not alter production data.
@@ -54,7 +54,7 @@ Use a non-production test project and accounts. Do not validate destructive acti
 - Items 1–4 passed, including the prior project-scope checks. The intermittent blank-screen issue has not recurred; continue monitoring.
 - Items 5 and 6 were pending before the latest changes. Item 5 now has an explicit JSON example in the chat; item 6 has an automated failure-path test. The manual persistence and successful-upload checks still need local validation.
 - The user accepted the prior outcomes for items 7–9; the latest requested labels and package workflow adjustments are implemented but still need local UX verification.
-- Items 10 and 11 remain pending for the user's final validation.
+- Access revocation isolation (item 10) passed on 2026-10-21: revoking one selected user's assignment did not affect other users' independent assignments. Full CI and the remaining manual acceptance are tracked below.
 
 ## Additional UX requirements
 
@@ -103,7 +103,7 @@ Unit tests do not prove that Supabase Storage, the configured database, Streamli
 ### Still to verify
 
 - GitHub Actions passed for persistence hardening, atomic template processing, generated/signed path separation, and signed-PDF cache invalidation. CI for the reset-flow metadata regression fix is pending.
-- Manual cloud smoke test: evidence upload passed. Package generation/replacement, signed upload, persistence after reload, and path separation passed. Remaining manual checks are the updated signed-upload label/widget refresh, download-link placement, required-field gate, access revocation isolation, and generated Word/Excel/PDF output review. Do not test destructive cases against production data.
+- Manual cloud smoke test: evidence upload passed. Package generation/replacement, signed upload, persistence after reload, and generated/signed path separation passed. Updated signed-upload label/widget refresh, download-link placement, required-field gate, access revocation isolation, and PDF signature-package workflow for configured Word and Excel templates were accepted. This is not a claim of standalone Excel/PDF generation. Do not test destructive cases against production data.
 - Storage cleanup is best-effort: if Supabase removal fails, the application warns and can leave an orphaned object for later cleanup.
 
 
@@ -114,5 +114,14 @@ Unit tests do not prove that Supabase Storage, the configured database, Streamli
 - Package-flow checks 1–2 and 4–6 passed. The generated-package folder retains only the current generated PDF; the signed folder retains prior uploads as history.
 - Signed PDF upload itself works. UI follow-up implemented on `dev`: show uploaded filename and timestamp, reset the uploader widget after upload, and place “Generar link de descarga” beside the file label.
 - Package tab is now hidden while visible required capture fields are missing or invalid, with an informational message naming the fields. Values must be saved before the gate opens.
-- Automated CI passed for code commit `91c320c`. Manual validation of the UI fixes remains pending in the Streamlit mirror.
+- Automated CI passed for the latest `dev` commit `10370e2` (run [39787357701](https://github.com/Innovateur-EEG/control-documental/actions/runs/39787357701)).
 - Do not merge to `main` until remaining manual acceptance is complete and the user explicitly authorizes the merge.
+
+
+## Final acceptance update (2026-10-22)
+
+- Access revocation isolation passed: revoking the selected user's assignment left other users' independent assignments intact.
+- PDF signature-package workflow passed for configured Word and Excel templates. This validates conversion/signature-package processing, not independent Excel or PDF output generation.
+- “Mis Expedientes” was decoupled from Admin project scope for direct assignments and descendants. Manual validations passed: independent assignment visibility/editability across projects, single top title for Usuario, and no duplicate heading in Admin tabs.
+- Latest CI run [39787357701](https://github.com/Innovateur-EEG/control-documental/actions/runs/39787357701) passed on commit `10370e2`.
+- Remaining: final diff review and explicit user decision on whether to merge `dev` into `main`. `main` remains unchanged until explicit authorization.
