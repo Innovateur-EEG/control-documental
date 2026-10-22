@@ -23,7 +23,10 @@ def limpiar_nombre_archivo(nombre: str) -> str:
 
 def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
     with tab_expedientes:
-        st.subheader("📋 Mis Expedientes")
+        if st.session_state.get("tipo_usuario") in ["Admin", "SuperAdmin"]:
+            st.subheader("Expedientes Asignados")
+        else:
+            st.subheader("📋 Mis Expedientes")
         
         # --- SOLUCIÓN PUNTOS 1 y 4: Restaurar herencia ---
         personas_directas = [asig.persona for asig in user_actual.personas_asignadas] if user_actual else []
