@@ -11,6 +11,7 @@ from app.utils.gestor import EDIT_PERMISSION, READ_ONLY_PERMISSION, descendant_p
 from app.utils.documentos import procesar_plantillas_a_pdf, fusionar_pdfs, obtener_ruta_paquete_generado, limpiar_metadatos_reinicio_paquete
 from app.utils.dynamic_fields import checkbox_value, dependent_options, field_config, field_is_visible, merge_capture_values, number_widget_options, text_widget_options, validate_submitted_value
 from app.utils.evidencias import upload_then_persist
+from app.utils.entity_types import normalize_person_type, scope_applies
 
 def limpiar_nombre_archivo(nombre: str) -> str:
     import unicodedata, re
@@ -59,6 +60,14 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
             participantes_disp = proy_map[proy_sel_id]["parts"]
             part_sel_id = col_sel2.selectbox("👤 Persona / Entidad:", options=[p.id for p in participantes_disp], format_func=lambda pid: next(f"{p.persona.razon_social_nombre} ({p.persona.tipo}) - Rol: {p.rol}" for p in participantes_disp if p.id == pid))
             part = next(p for p in participantes_disp if p.id == part_sel_id)
+            try:
+                normalize_person_type(part.persona.tipo)
+            except ValueError:
+                st.error(
+                    f"El tipo de entidad de {part.persona.razon_social_nombre!r} no es válido. "
+                    "Corrígelo en el Catálogo Maestro antes de capturar información."
+                )
+                st.stop()
             
             # Resolve direct and inherited permissions. Unknown values fail closed.
             direct_permissions = {
@@ -92,7 +101,7 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
             datos_guardados_gate = part.persona.datos_json or {}
             campos_gate = [
                 campo for campo in db.query(ConfiguracionCampos).all()
-                if campo.tipo_persona in ["Ambas", part.persona.tipo]
+                if scope_applies(campo.tipo_persona, part.persona.tipo)
                 and (not campo.roles_aplica or part.rol in campo.roles_aplica)
             ]
             campos_requeridos_pendientes = []
@@ -158,7 +167,7 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                     
                 datos_actuales = part.persona.datos_json or {}
                 todos_campos = db.query(ConfiguracionCampos).all()
-                campos_aplicables = [c for c in todos_campos if c.tipo_persona in ["Ambas", part.persona.tipo] and (not c.roles_aplica or part.rol in c.roles_aplica)]
+                campos_aplicables = [c for c in todos_campos if scope_applies(c.tipo_persona, part.persona.tipo) and (not c.roles_aplica or part.rol in c.roles_aplica)]
                 
                 if campos_aplicables:
                     # Configuration is metadata-driven. Conditional fields need reruns, so widgets
@@ -361,7 +370,7 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
             with subtab_evid:
                 st.write("📎 **Documentos Adjuntos Requeridos**")
                 todas_evidencias = db.query(ConfiguracionEvidencia).all()
-                evidencias_aplicables = [e for e in todas_evidencias if e.tipo_persona in ["Ambas", part.persona.tipo] and (not e.roles_aplica or part.rol in e.roles_aplica)]
+                evidencias_aplicables = [e for e in todas_evidencias if scope_applies(e.tipo_persona, part.persona.tipo) and (not e.roles_aplica or part.rol in e.roles_aplica)]
                 
                 if not evidencias_aplicables:
                     st.info("No se requieren documentos probatorios adicionales para este perfil.")
