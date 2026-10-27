@@ -10,7 +10,6 @@ from sqlalchemy import text
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.models.database import get_engine
 from app.utils.entity_types import normalize_person_scope, normalize_person_type
 
 
@@ -54,6 +53,8 @@ def audit_entity_types(engine):
 
 
 def main():
+    from app.models.database import get_engine
+
     rows = audit_entity_types(get_engine())
     if not rows:
         print("No rows found in the audited columns.")
