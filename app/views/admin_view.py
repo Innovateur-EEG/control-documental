@@ -5,11 +5,19 @@ import os
 import re
 import unicodedata
 import uuid
+from app.utils.entity_types import normalize_person_type, normalize_person_scope
 from app.models.database import Usuario, Proyecto, Persona, Catalogo, Participacion, JerarquiaParticipacion, DocumentoExpediente, PlantillaFormato, ConfiguracionCampos, ConfiguracionEvidencia, UsuarioPersonaGestor, supabase_client
 from app.utils.auth import generar_hash
 from app.utils.gestor import EDIT_PERMISSION, descendant_participation_ids, effective_permission
 from app.utils.dynamic_fields import SUPPORTED_FIELD_TYPES, validate_field_config
 from sqlalchemy.orm.attributes import flag_modified
+
+
+def _normalizar_tipo_persona_para_edicion(value):
+    try:
+        return normalize_person_type(value)
+    except ValueError:
+        return str(value or "")
 
 
 def _storage_safe_filename(filename: str) -> str:
@@ -381,10 +389,12 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                         if part.id in visitados: return
                         visitados.add(part.id)
                         
-                        tipo_raw = str(part.persona.tipo or "").strip().lower()
-                        tipo_limpio = "Moral" if "moral" in tipo_raw else "Fisica"
-                        
-                        icono = "🏢 " if tipo_limpio == "Moral" else "👤 "
+                        try:
+                            tipo_limpio = normalize_person_type(part.persona.tipo)
+                            icono = "🏢 " if tipo_limpio == "Moral" else "👤 "
+                        except ValueError:
+                            tipo_limpio = "Tipo inválido"
+                            icono = "⚠️ "
                         indent = "    " * nivel
                         arbol_visual = f"{indent}{prefijo}{icono}{part.persona.razon_social_nombre}"
                         
@@ -611,7 +621,7 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                         "ID": p.id,
                         "Nombre o Razón Social": p.razon_social_nombre,
                         "RFC": p.rfc or "",
-                        "Tipo": p.tipo,
+                        "Tipo": _normalizar_tipo_persona_para_edicion(p.tipo),
                         "Proyectos": proys_str,
                         "Roles": roles_str,
                         "Administrador": ", ".join(admins_asig) if admins_asig else "",
@@ -638,15 +648,20 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                 col_pbtn1, col_pbtn2 = st.columns([1, 1])
                 with col_pbtn1:
                     if st.button("💾 Guardar Cambios en Catálogo", key="btn_save_pers_cat"):
-                        for _, row in df_pers_edit.iterrows():
-                            p_obj = db.query(Persona).filter(Persona.id == row["ID"]).first()
-                            if p_obj:
-                                p_obj.razon_social_nombre = row["Nombre o Razón Social"]
-                                p_obj.rfc = row["RFC"]
-                                p_obj.tipo = row["Tipo"]
-                        db.commit()
-                        st.success("Catálogo actualizado.")
-                        st.rerun()
+                        try:
+                            for _, row in df_pers_edit.iterrows():
+                                p_obj = db.query(Persona).filter(Persona.id == row["ID"]).first()
+                                if p_obj:
+                                    p_obj.razon_social_nombre = row["Nombre o Razón Social"]
+                                    p_obj.rfc = row["RFC"]
+                                    p_obj.tipo = normalize_person_type(row["Tipo"])
+                            db.commit()
+                        except ValueError as exc:
+                            db.rollback()
+                            st.error(f"No se guardaron los cambios: {exc}")
+                        else:
+                            st.success("Catálogo actualizado.")
+                            st.rerun()
                         
                 with col_pbtn2:
                     pers_sel_df = df_pers_edit[df_pers_edit["Sel"] == True]
@@ -673,7 +688,7 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                         r_p = c_t2.text_input("RFC (Opcional)")
                         nom_p = st.text_input("Nombre o Razón Social")
                         if st.form_submit_button("Agregar al Catálogo Maestro") and nom_p:
-                            db.add(Persona(tipo=t_p, rfc=r_p, razon_social_nombre=nom_p))
+                            db.add(Persona(tipo=normalize_person_type(t_p), rfc=r_p, razon_social_nombre=nom_p))
                             db.commit()
                             st.rerun()
 
@@ -1065,6 +1080,10 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                             llave = str(row.get("Variable Jinja") or "").strip().lower().replace(" ", "_")
                             tipo = str(row.get("Tipo") or "").strip()
                             tipo_persona = str(row.get("Tipo persona") or "").strip()
+                            try:
+                                tipo_persona = normalize_person_scope(tipo_persona)
+                            except ValueError:
+                                pass
                             opciones_txt = str(row.get("Opciones (coma)") or "").strip()
                             roles_txt = str(row.get("Roles (coma)") or "").strip()
                             regla = str(row.get("Validación") or "ninguna").strip()
@@ -1194,6 +1213,10 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                         for numero_fila, row in enumerate(rows, start=1):
                             nombre = str(row.get("Nombre de evidencia") or "").strip()
                             tipo_persona = str(row.get("Tipo persona") or "").strip()
+                            try:
+                                tipo_persona = normalize_person_scope(tipo_persona)
+                            except ValueError:
+                                pass
                             roles_txt = str(row.get("Roles (coma)") or "").strip()
                             config_txt = str(row.get("Configuración JSON") or "{}").strip() or "{}"
                             id_val = row.get("ID")
