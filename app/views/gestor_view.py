@@ -198,11 +198,6 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                     for c in campos_ordenados:
                         config = _field_config(c)
                         seccion = str(config.get("section") or "General").strip() or "General"
-                        if seccion != seccion_actual:
-                            st.markdown(f"#### {seccion}")
-                            seccion_actual = seccion
-                            columnas = st.columns(2)
-                            indice_columna = 0
 
                         valores_para_reglas = dict(datos_actuales)
                         valores_para_reglas.update(nuevos_datos)
@@ -217,6 +212,13 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                             visible = True
                         if not visible:
                             continue
+
+                        # Render a section heading only when its first visible field is reached.
+                        if seccion != seccion_actual:
+                            st.markdown(f"#### {seccion}")
+                            seccion_actual = seccion
+                            columnas = st.columns(2)
+                            indice_columna = 0
 
                         col = columnas[indice_columna % 2]
                         indice_columna += 1
