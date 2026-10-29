@@ -20,6 +20,12 @@ def _normalizar_tipo_persona_para_edicion(value):
         return str(value or "")
 
 
+def _format_fecha_actualizacion(doc) -> str:
+    """Format a document update timestamp, tolerating missing records or timestamps."""
+    fecha = getattr(doc, "fecha_actualizacion", None) if doc is not None else None
+    return fecha.strftime("%Y-%m-%d %H:%M") if fecha is not None else "-"
+
+
 def _storage_safe_filename(filename: str) -> str:
     """Create an ASCII-only storage filename while preserving its extension."""
     base, extension = os.path.splitext(os.path.basename(filename or "template"))
@@ -53,7 +59,7 @@ def render_admin(db, user_actual, is_super, tab_tablero, tab_config, mis_proyect
                 ).first()
                 
                 estatus_doc = doc.estatus if doc else "No empezado"
-                ultima_act = doc.fecha_actualizacion.strftime('%Y-%m-%d %H:%M') if doc else "-"
+                ultima_act = _format_fecha_actualizacion(doc)
                 
                 datos_tablero.append({
                     "Proyecto": part.proyecto.nombre,
