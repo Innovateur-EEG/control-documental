@@ -225,3 +225,184 @@ Antes de guardar una configuración:
 - `tests/test_dynamic_fields.py` y `tests/test_seed_json_tests.py`: pruebas automatizadas relacionadas.
 
 Al modificar estas capacidades, consulta el código y las pruebas actuales. Esta guía explica el comportamiento documentado en el repositorio; no sustituye la verificación de una implementación nueva.
+
+
+## 10. Plantillas de documentos: Jinja
+
+La configuración JSON del campo y la plantilla Jinja cumplen funciones distintas:
+
+- `configuracion_json` configura el formulario de captura.
+- La plantilla Word o Excel usa expresiones Jinja para colocar los valores guardados en el documento.
+- Para insertar un valor, utiliza su `llave_jinja`, respetando exactamente el nombre configurado en el campo.
+
+Ejemplo:
+
+```jinja
+Nombre: {{ nombre_completo }}
+RFC: {{ rfc }}
+```
+
+Las expresiones se evalúan con los valores del contexto de generación del documento. No inventes variables: confirma que la `llave_jinja` existe y que el campo ya tiene el valor que esperas imprimir.
+
+### 10.1 Filtros Jinja integrados
+
+La aplicación crea un entorno `jinja2.Environment()`, por lo que están disponibles los filtros estándar de Jinja2, además de los filtros personalizados descritos más adelante.
+
+| Filtro | Ejemplo | Uso |
+|---|---|---|
+| `default` | `{{ segundo_nombre | default("", true) }}` | Sustituye un valor indefinido; con el segundo argumento `true`, también sustituye valores falsos o vacíos. |
+| `upper` | `{{ nombre | upper }}` | Convierte el texto a mayúsculas. |
+| `lower` | `{{ correo | lower }}` | Convierte el texto a minúsculas. |
+| `title` | `{{ nombre | title }}` | Convierte el texto a formato de título. |
+| `trim` | `{{ domicilio | trim }}` | Elimina espacios al inicio y al final. |
+| `replace` | `{{ telefono | replace("-", "") }}` | Reemplaza una cadena por otra. |
+| `length` | `{{ documentos | length }}` | Devuelve la longitud de una cadena o colección. |
+| `join` | `{{ actividades | join(", ") }}` | Une elementos de una lista con un separador. |
+| `round` | `{{ porcentaje | round(2) }}` | Redondea un número. |
+| `int`, `float` | `{{ cantidad | int }}` | Convierte un valor numérico cuando sea válido. |
+
+Ejemplo para un dato opcional:
+
+```jinja
+Segundo nombre: {{ segundo_nombre | default("No aplica", true) }}
+```
+
+Nota: `default` es un filtro integrado de Jinja2; no es la clave JSON `default` descrita en la sección 2. La clave JSON define un valor inicial de captura. El filtro Jinja define cómo representar un valor al generar el documento.
+
+### 10.2 Filtros personalizados de la aplicación
+
+La aplicación registra tres filtros personalizados: `mark`, `mark_not` y `prefix`. Están registrados tanto en el renderizador Word como en el renderizador Excel.
+
+#### `mark`: marcar una coincidencia
+
+Devuelve `X` si el valor coincide con el objetivo; si no coincide, devuelve una cadena vacía por defecto.
+
+```jinja
+Mexicana: {{ nacionalidad | mark("Mexicana") }}
+Extranjera: {{ nacionalidad | mark("Extranjera") }}
+```
+
+Características:
+- La comparación no distingue mayúsculas ni acentos: `"Sí"` coincide con `"si"`.
+- Acepta listas o tuplas, por ejemplo, para una selección múltiple.
+- Si se omite el objetivo, marca un valor verdadero, útil para una casilla booleana.
+- Los valores ausentes o en blanco nunca generan una marca, incluso al invertir la comparación.
+
+Parámetros opcionales:
+
+```jinja
+{{ estado_civil | mark("Casado/a", mark="✓", default="-") }}
+```
+
+- `mark`: símbolo de salida cuando se cumple la condición; por defecto, `"X"`.
+- `default`: salida cuando no se cumple la condición; por defecto, `""`.
+
+#### `mark_not` e inversión con `is_not`
+
+`mark_not` es el filtro inverso por compatibilidad: marca cuando el valor no coincide con el objetivo. Para plantillas nuevas también puedes usar `mark(..., is_not=True)`.
+
+```jinja
+No mexicana: {{ nacionalidad | mark_not("Mexicana") }}
+No mexicana (forma alternativa): {{ nacionalidad | mark("Mexicana", is_not=True) }}
+```
+
+Para valores en blanco o ausentes, ambos ejemplos dejan la salida vacía; no los interpretan como una respuesta negativa. `mark_not` admite explícitamente el argumento `is_not` por compatibilidad, pero normalmente no es necesario indicarlo.
+
+Para excluir varias opciones:
+
+```jinja
+Otro estado civil: {{ estado_civil | mark_not(["Soltero/a", "Casado/a"]) }}
+```
+
+#### `prefix`: prefijo para datos opcionales
+
+Añade un prefijo solo si el valor tiene contenido. Si el valor es ausente o está en blanco, devuelve una cadena vacía.
+
+```jinja
+{{ interior | prefix(", interior: ") }}
+{{ codigo_postal | prefix("C.P. ") }}
+{{ rfc | prefix("RFC: ") }}
+```
+
+Este filtro es útil para evitar etiquetas o separadores sin dato, por ejemplo, que aparezca `", interior: "` cuando no se capturó interior.
+
+### 10.3 Condiciones en plantillas Word
+
+En documentos `.docx`, el renderizador usa `docxtpl`. Puedes incluir o excluir texto o párrafos según el valor de un campo. Los controles especiales `{%p ... %}` deben colocarse en párrafos separados; el párrafo que contiene la etiqueta de control se elimina durante el renderizado.
+
+Ejemplo: incluir una aclaración solo para personas extranjeras:
+
+```jinja
+{%p if nacionalidad == "Extranjera" %}
+La persona presenta documentación migratoria complementaria.
+{%p endif %}
+```
+
+Ejemplo: mostrar una cláusula solo cuando se capturó una fecha:
+
+```jinja
+{%p if fecha_vencimiento %}
+La fecha de vencimiento declarada es {{ fecha_vencimiento }}.
+{%p endif %}
+```
+
+Casos útiles:
+- Incluir una cláusula adicional cuando un campo tenga un valor específico.
+- Omitir una sección opcional cuando no se capturó información.
+- Mostrar una explicación distinta según el tipo de persona, nacionalidad o régimen.
+- Condicionar un párrafo a una casilla booleana verdadera.
+
+Usa los valores reales del contexto y las comparaciones que correspondan a su tipo. No uses una condición como sustituto de la validación del formulario: la plantilla decide qué imprime, no si el dato es correcto.
+
+### 10.4 Bucles en plantillas Word
+
+Los bucles sirven cuando el contexto contiene una lista iterable. Un caso habitual es una selección múltiple, cuyo valor puede ser una lista de opciones seleccionadas. No asumas que existen listas de objetos, filas de expedientes u otras colecciones si el contexto de generación no las proporciona.
+
+Para recorrer una lista en un párrafo, coloca las etiquetas de control en párrafos separados:
+
+```jinja
+{%p for opcion in actividades %}
+- {{ opcion }}
+{%p endfor %}
+```
+
+Para repetir una fila de una tabla Word, usa las etiquetas especiales `{%tr ... %}` en una fila dedicada:
+
+```jinja
+{%tr for opcion in actividades %}
+{{ opcion }}
+{%tr endfor %}
+```
+
+En el ejemplo de tabla, coloca el contenido de la fila repetida en la misma fila que el inicio del bucle; la fila con la etiqueta `{%tr for ... %}` se usa como fila de plantilla y se repite por cada elemento. Ajusta la tabla en Word y valida el documento generado, porque el diseño de la fila determina el resultado visual.
+
+Casos útiles:
+- Enumerar las opciones seleccionadas en un campo de selección múltiple.
+- Repetir una fila por cada elemento de una lista que efectivamente esté presente en el contexto.
+- Generar una lista de actividades o documentos cuando la aplicación entregue esos elementos como colección.
+
+### 10.5 Límites del renderizador Excel
+
+El renderizador Excel actual procesa expresiones Jinja dentro de celdas de texto que contienen `{{ ... }}`. Registra los filtros `mark`, `mark_not` y `prefix`, por lo que las expresiones y los filtros anteriores pueden usarse en celdas.
+
+No se debe asumir que Excel admite las mismas estructuras de control que Word: la implementación actual no renderiza el libro completo con `docxtpl` ni procesa bloques `{% if %}` o `{% for %}` para agregar, eliminar o repetir filas. Para Excel, limita la plantilla a expresiones dentro de celdas y verifica que las fórmulas y el formato del libro se conserven.
+
+## 11. Lista de comprobación para plantillas
+
+1. Confirma que cada variable Jinja coincide con una `llave_jinja` existente.
+2. Comprueba la salida con un valor normal, un valor vacío y una variable ausente.
+3. Prueba `mark` con coincidencia, no coincidencia, diferencias de mayúsculas/acentos y listas cuando corresponda.
+4. Comprueba que `mark_not` no marque valores vacíos.
+5. Prueba `prefix` con valores presentes y vacíos.
+6. Para controles y bucles Word, revisa que las etiquetas `{%p ... %}` y `{%tr ... %}` estén en párrafos o filas separados según corresponda.
+7. Genera el documento real y revisa el diseño final; no basta con que la expresión Jinja sea válida.
+8. Para Excel, no uses bloques de control ni bucles como si el renderizador Word también se aplicara al libro.
+9. Ejecuta las pruebas con datos de prueba, no con información productiva.
+
+## 12. Referencias de implementación Jinja
+
+- `app/utils/template_filters.py`: comportamiento exacto de `mark`, `mark_not` y `prefix`.
+- `app/utils/documentos.py`: registro de filtros y diferencias entre los renderizadores Word y Excel.
+- `tests/test_template_filters.py`: pruebas de filtros personalizados.
+- `tests/test_excel_template_rendering.py`: pruebas de expresiones y filtros en Excel.
+- `tests/fixtures/plantilla_pruebas_json.txt`: ejemplos de prueba de campos dinámicos y filtros.
