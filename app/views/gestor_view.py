@@ -155,11 +155,11 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                         f"Faltan {cantidad_pendientes} campos obligatorios para completar el formulario."
                     )
                 else:
-                    lista_pendientes = "\\n".join(
+                    lista_pendientes = "\n".join(
                         f"- {nombre}" for nombre in campos_requeridos_pendientes
                     )
                     mensaje_bloqueo += (
-                        "Complete y guarde los siguientes campos obligatorios en «Formulario de Captura»:\\n\\n"
+                        "Complete y guarde los siguientes campos obligatorios en «Formulario de Captura»:\n\n"
                         + lista_pendientes
                     )
                 st.info(mensaje_bloqueo)
