@@ -369,12 +369,12 @@ Para recorrer una lista en un párrafo, coloca las etiquetas de control en párr
 Para repetir una fila de una tabla Word, usa las etiquetas especiales `{%tr ... %}` en una fila dedicada:
 
 ```jinja
-{%tr for opcion in actividades %}
-{{ opcion }}
-{%tr endfor %}
+Fila de control: {%tr for opcion in actividades %}
+Fila repetida:  {{ opcion }}
+Fila de control: {%tr endfor %}
 ```
 
-En el ejemplo de tabla, coloca el contenido de la fila repetida en la misma fila que el inicio del bucle; la fila con la etiqueta `{%tr for ... %}` se usa como fila de plantilla y se repite por cada elemento. Ajusta la tabla en Word y valida el documento generado, porque el diseño de la fila determina el resultado visual.
+En Word, cada etiqueta `{%tr ... %}` debe ir en su propia fila de control; esas filas se eliminan durante el renderizado. La fila intermedia contiene `{{ opcion }}` y se repite por cada elemento. Ajusta la tabla en Word y valida el documento generado, porque el diseño de las filas determina el resultado visual.
 
 Casos útiles:
 - Enumerar las opciones seleccionadas en un campo de selección múltiple.
