@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 from numbers import Real
 from typing import Any
 
@@ -112,6 +113,65 @@ def validate_submitted_value(config: dict, value: Any, values: dict, base_option
     if isinstance(value, list):
         return all(item in options for item in value)
     return value in options
+
+
+def validate_capture_submission(
+    fields: list[dict],
+    submitted_values: dict,
+    values: dict,
+    today: datetime.date | None = None,
+) -> list[str]:
+    """Validate visible submitted capture values before persistence."""
+    current_date = today or datetime.date.today()
+    submitted_values = submitted_values or {}
+    validation_values = dict(values or {})
+    validation_values.update(submitted_values)
+    errors = []
+
+    for field in fields:
+        key = field.get("key")
+        if not key or key not in submitted_values:
+            # Hidden fields are omitted by the UI and must not block saving.
+            continue
+
+        value = submitted_values.get(key)
+        label = field.get("label") or key
+        config = field_config(field.get("config"))
+        field_type = field.get("type")
+
+        empty = value is None or value == "" or value == []
+        if field_type == "Casilla" and not checkbox_value(value):
+            empty = True
+        if config.get("required", False) and empty:
+            errors.append(f"❌ '{label}' es obligatorio.")
+
+        if "options_map" in config:
+            try:
+                valid = validate_submitted_value(
+                    config,
+                    value,
+                    validation_values,
+                    field.get("options") or [],
+                )
+                if not valid:
+                    errors.append(
+                        f"❌ '{label}' contiene una opción no permitida para la selección actual."
+                    )
+            except ValueError as exc:
+                errors.append(f"❌ Configuración inválida para '{label}': {exc}")
+
+        if field_type == "Fecha" and isinstance(value, datetime.date):
+            rule = field.get("validation_rule")
+            if rule == "max_90_dias":
+                difference = (current_date - value).days
+                if difference > 90:
+                    errors.append(f"❌ '{label}' excede 90 días de antigüedad.")
+                elif difference < 0:
+                    errors.append(f"❌ '{label}' no puede ser fecha futura.")
+            elif rule == "vigente_futuro" and value < current_date:
+                errors.append(f"❌ '{label}' ya está vencido.")
+
+    return errors
 
 
 def merge_capture_values(existing: dict, submitted: dict) -> dict:
