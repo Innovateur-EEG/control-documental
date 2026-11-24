@@ -125,3 +125,71 @@ Unit tests do not prove that Supabase Storage, the configured database, Streamli
 - “Mis Expedientes” was decoupled from Admin project scope for direct assignments and descendants. Manual validations passed: independent assignment visibility/editability across projects, single top title for Usuario, and no duplicate heading in Admin tabs.
 - Latest CI run [39787357701](https://github.com/Innovateur-EEG/control-documental/actions/runs/39787357701) passed on commit `10370e2`.
 - Remaining: final diff review and explicit user decision on whether to merge `dev` into `main`. `main` remains unchanged until explicit authorization.
+
+
+---
+
+## Current maintenance status — 2026-11-24
+
+### Completed on `main`
+
+- PR [#10](https://github.com/Innovateur-EEG/control-documental/pull/10) fixed empty section headings in the dynamic capture form.
+- PR [#11](https://github.com/Innovateur-EEG/control-documental/pull/11) shortened the required-fields blocker message.
+- Both changes are merged into `main`. Their checks passed.
+
+### Capture feedback correction — PR #13
+
+PR [#13](https://github.com/Innovateur-EEG/control-documental/pull/13) is open against `main`.
+
+The source of the misleading green status was the permission indicator:
+`st.success("✏️ Edición Completa")` represented edit permission, not form completion.
+The UI now uses a neutral `Permiso: edición` caption.
+
+The PR also:
+- Moves the persisted-required-fields package blocker beside the save action.
+- Consolidates validation, save failure, and save success feedback beside that action.
+- Displays success only after the database commit succeeds.
+- Rolls back failed commits and shows a safe error message.
+- Extracts capture validation into a pure helper with regression tests.
+- Preserves the existing dynamic-field JSON configuration and database schema.
+
+### Automated verification
+
+For PR #13, GitHub Actions completed successfully on 2026-11-24:
+
+- Python compilation: passed.
+- Full pytest suite: **117 passed, 65 warnings**.
+- CodeQL Python analysis: passed.
+- CodeQL Actions analysis: passed.
+
+These results establish automated verification only. They do not establish manual UI or cloud acceptance.
+
+### Manual acceptance required
+
+Use a non-production environment and test accounts. Do not use production data for negative tests.
+
+1. **Permission label:** open an editable expediente. Confirm the green “Edición Completa” status is gone. Confirm the neutral “Permiso: edición” caption appears. Confirm read-only users still see “Solo Lectura”.
+2. **Invalid required field:** clear one visible required field and select “Validar y Guardar Datos”. Confirm red validation appears beside the button. Confirm no green save message appears.
+3. **Persistence after invalid save:** reopen or refresh the expediente. Confirm the last saved value remains unchanged.
+4. **Package blocker:** while a required value remains missing, confirm the blocker message appears beside the save button. Confirm “Paquete para firma” remains unavailable.
+5. **Successful save:** enter valid values for all visible required fields and save. Confirm “Datos guardados correctamente” appears beside the button after rerun.
+6. **Persistence after successful save:** refresh or reopen the expediente. Confirm the new values remain saved.
+7. **Package gate opens:** confirm “Paquete para firma” appears only after persisted required values are valid.
+8. **Conditional field preservation:** hide a conditional field, save an unrelated visible field, then make the condition true again. Confirm the hidden field's previous value remains.
+9. **Dependent options:** change a parent field. Confirm the child options update and allow only a currently valid selection.
+10. **Read-only behavior:** confirm a read-only user cannot save capture data.
+11. **Database failure handling:** only if a safe test database is available, simulate a failed save. Confirm no success message appears and the previous saved values remain.
+
+### Required user evidence
+
+For each step, report **Pass**, **Fail**, or **Not tested**.
+For failures, provide a screenshot and the relevant Streamlit terminal/browser-console error.
+Redact personal data, access tokens, connection strings, and other secrets.
+Identify only the environment type (local, staging, or production); do not send credentials.
+
+### Branch and deferred work
+
+- PR #13 is based on current `main`. The `dev` branch was 11 commits behind `main` when work started.
+- Do not merge PR #13 until manual acceptance is complete and the user explicitly authorizes the merge.
+- Issue [#12](https://github.com/Innovateur-EEG/control-documental/issues/12), explicit row/column placement for dynamic fields, remains intentionally deferred. It would change the JSON configuration and is outside this bug fix.
+- The intermittent blank screen after login remains a monitoring item. Its root cause is unknown; collect logs if it recurs.
