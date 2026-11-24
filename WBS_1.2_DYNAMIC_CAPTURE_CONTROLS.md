@@ -75,3 +75,19 @@ Automated verification is green on `dev`. Before treating the workflow as fully 
 **Implementation exit:** complete.  
 **Verification exit:** targeted tests passed; full-suite and UI regression checks pending.  
 **Merge to `main`:** not performed.
+
+
+---
+
+## Current release and verification update — 2026-11-24
+
+The earlier `dev` status above is historical. The current release branch is `main`.
+
+- Dynamic capture controls are included in the released application.
+- The accepted design preserves values when conditional fields are hidden.
+- The package gate checks persisted required fields according to visibility.
+- PR [#13](https://github.com/Innovateur-EEG/control-documental/pull/13) adds a testable submission-validation helper and consolidates save feedback. It does not change the JSON configuration or database schema.
+- PR #13 automated checks passed: Python compilation, **117 pytest tests**, and CodeQL Python/Actions analysis.
+- Manual UI verification for PR #13 remains pending. Use the checklist in [WBS_GESTOR_INTERFACE.md](./WBS_GESTOR_INTERFACE.md), section “Manual acceptance required”.
+
+Do not interpret the earlier “merge not performed” statement as the current release state. PRs #10 and #11 are merged into `main`; PR #13 remains open pending manual acceptance and explicit merge authorization.
