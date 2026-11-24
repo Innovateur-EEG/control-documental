@@ -1,5 +1,7 @@
 """Tests for JSON-driven dynamic field widget configuration."""
 
+import datetime
+
 import pytest
 
 from app.utils.dynamic_fields import (
@@ -11,6 +13,7 @@ from app.utils.dynamic_fields import (
     number_widget_options,
     merge_capture_values,
     validate_submitted_value,
+    validate_capture_submission,
     text_widget_options,
     validate_field_config,
 )
@@ -155,3 +158,78 @@ def test_merge_capture_values_preserves_hidden_and_unrelated_fields():
     assert merge_capture_values(existing, {"visible": "new"}) == {
         "visible": "new", "hidden": "keep", "unrelated": 10
     }
+
+
+
+def test_validate_capture_submission_rejects_missing_required_value():
+    fields = [
+        {"key": "name", "label": "Nombre", "config": {"required": True}, "type": "Texto"}
+    ]
+    assert validate_capture_submission(fields, {"name": ""}, {}) == [
+        "❌ 'Nombre' es obligatorio."
+    ]
+
+
+def test_validate_capture_submission_ignores_hidden_fields_omitted_from_form():
+    fields = [
+        {"key": "hidden", "label": "Campo oculto", "config": {"required": True}, "type": "Texto"}
+    ]
+    assert validate_capture_submission(fields, {}, {"hidden": ""}) == []
+
+
+def test_validate_capture_submission_rejects_obsolete_dependent_option():
+    fields = [
+        {
+            "key": "document",
+            "label": "Documento",
+            "config": {
+                "options_map": {
+                    "depends_on": "person_type",
+                    "map": {"Fisica": ["CURP"], "Moral": ["Acta"]},
+                }
+            },
+            "type": "Selección única",
+            "options": [],
+        }
+    ]
+    assert validate_capture_submission(
+        fields,
+        {"document": "Acta"},
+        {"person_type": "Fisica"},
+    ) == [
+        "❌ 'Documento' contiene una opción no permitida para la selección actual."
+    ]
+
+
+def test_validate_capture_submission_checks_date_rules():
+    today = datetime.date(2026, 11, 24)
+    fields = [
+        {
+            "key": "issued_at",
+            "label": "Fecha de emisión",
+            "config": {},
+            "type": "Fecha",
+            "validation_rule": "max_90_dias",
+        }
+    ]
+    assert validate_capture_submission(
+        fields,
+        {"issued_at": today - datetime.timedelta(days=91)},
+        {},
+        today=today,
+    ) == ["❌ 'Fecha de emisión' excede 90 días de antigüedad."]
+    assert validate_capture_submission(
+        fields,
+        {"issued_at": today + datetime.timedelta(days=1)},
+        {},
+        today=today,
+    ) == ["❌ 'Fecha de emisión' no puede ser fecha futura."]
+
+
+def test_validate_capture_submission_rejects_unchecked_required_checkbox():
+    fields = [
+        {"key": "accepted", "label": "Acepto", "config": {"required": True}, "type": "Casilla"}
+    ]
+    assert validate_capture_submission(fields, {"accepted": False}, {}) == [
+        "❌ 'Acepto' es obligatorio."
+    ]

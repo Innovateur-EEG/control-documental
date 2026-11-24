@@ -2,6 +2,7 @@ import os
 import io
 import zipfile
 import datetime
+import logging
 import streamlit as st
 import pandas as pd
 from docxtpl import DocxTemplate
@@ -9,7 +10,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.database import Participacion, JerarquiaParticipacion, DocumentoExpediente, PlantillaFormato, ConfiguracionCampos, ConfiguracionEvidencia, UsuarioPersonaGestor, supabase_client
 from app.utils.gestor import EDIT_PERMISSION, READ_ONLY_PERMISSION, descendant_participation_ids, effective_permission
 from app.utils.documentos import procesar_plantillas_a_pdf, fusionar_pdfs, obtener_ruta_paquete_generado, limpiar_metadatos_reinicio_paquete
-from app.utils.dynamic_fields import checkbox_value, dependent_options, field_config, field_is_visible, merge_capture_values, number_widget_options, text_widget_options, validate_submitted_value
+from app.utils.dynamic_fields import checkbox_value, dependent_options, field_config, field_is_visible, merge_capture_values, number_widget_options, text_widget_options, validate_submitted_value, validate_capture_submission
 from app.utils.evidencias import upload_then_persist
 from app.utils.entity_types import normalize_person_type, scope_applies
 
@@ -95,7 +96,7 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
             if es_solo_lectura:
                 c_head2.warning("🔒 Solo Lectura")
             else:
-                c_head2.success("✏️ Edición Completa")
+                c_head2.caption("Permiso: edición")
 
             # --- Gate the signing-package workflow on persisted required capture fields. ---
             datos_guardados_gate = part.persona.datos_json or {}
@@ -162,7 +163,6 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                         "Complete y guarde los siguientes campos obligatorios en «Formulario de Captura»:\n\n"
                         + lista_pendientes
                     )
-                st.info(mensaje_bloqueo)
                 subtab_form, subtab_evid = st.tabs(["📝 Formulario de Captura", "📎 Documentos Adjuntos"])
                 subtab_paquete = None
             else:
@@ -330,41 +330,38 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                                 st.warning(f"Tipo de campo no compatible: '{tipo}' ({c.nombre_mostrar}).")
                                 nuevos_datos[c.llave_jinja] = val_previo
 
+                    feedback_state = st.session_state.pop("capture_feedback", None)
+                    feedback = (
+                        feedback_state[1:]
+                        if feedback_state and feedback_state[0] == part.id
+                        else None
+                    )
                     submit_btn = st.button("Validar y Guardar Datos", key=f"save_datos_{part.id}", disabled=es_solo_lectura)
                     if submit_btn and not es_solo_lectura:
-                        errores = []
-                        for c in campos_ordenados:
-                            if c.llave_jinja not in nuevos_datos:
-                                continue
-                            val = nuevos_datos.get(c.llave_jinja)
-                            config = _field_config(c)
-                            if config.get("required", False) and (val is None or val == "" or val == [] or (c.tipo_input == "Casilla" and val is not True)):
-                                errores.append(f"❌ '{c.nombre_mostrar}' es obligatorio.")
-                            if "options_map" in config:
-                                valores_validacion = dict(datos_actuales)
-                                valores_validacion.update(nuevos_datos)
-                                for llave_regla, campo_regla in campo_por_llave.items():
-                                    clave_regla = f"field_{part.id}_{campo_regla.id}"
-                                    if clave_regla in st.session_state:
-                                        valores_validacion[llave_regla] = st.session_state[clave_regla]
-                                try:
-                                    if not validate_submitted_value(config, val, valores_validacion, c.opciones_json or []):
-                                        errores.append(f"❌ '{c.nombre_mostrar}' contiene una opción no permitida para la selección actual.")
-                                except ValueError as exc:
-                                    errores.append(f"❌ Configuración inválida para '{c.nombre_mostrar}': {exc}")
-                            if c.tipo_input == "Fecha" and isinstance(val, datetime.date):
-                                if c.regla_validacion == "max_90_dias":
-                                    diff = (datetime.date.today() - val).days
-                                    if diff > 90:
-                                        errores.append(f"❌ '{c.nombre_mostrar}' excede 90 días de antigüedad.")
-                                    elif diff < 0:
-                                        errores.append(f"❌ '{c.nombre_mostrar}' no puede ser fecha futura.")
-                                elif c.regla_validacion == "vigente_futuro":
-                                    if val < datetime.date.today():
-                                        errores.append(f"❌ '{c.nombre_mostrar}' ya está vencido.")
+                        valores_validacion = dict(datos_actuales)
+                        valores_validacion.update(nuevos_datos)
+                        for llave_regla, campo_regla in campo_por_llave.items():
+                            clave_regla = f"field_{part.id}_{campo_regla.id}"
+                            if clave_regla in st.session_state:
+                                valores_validacion[llave_regla] = st.session_state[clave_regla]
+                        campos_para_validar = [
+                            {
+                                "key": c.llave_jinja,
+                                "label": c.nombre_mostrar,
+                                "config": _field_config(c),
+                                "type": c.tipo_input,
+                                "validation_rule": c.regla_validacion,
+                                "options": c.opciones_json or [],
+                            }
+                            for c in campos_ordenados
+                        ]
+                        errores = validate_capture_submission(
+                            campos_para_validar,
+                            nuevos_datos,
+                            valores_validacion,
+                        )
                         if errores:
-                            for e in errores:
-                                st.error(e)
+                            feedback = ("error", errores)
                         else:
                             # Merge submitted values so unrelated and hidden conditional fields are preserved.
                             valores_a_guardar = {
@@ -374,9 +371,35 @@ def render_gestor(db, user_actual, tab_expedientes, allowed_project_ids=None):
                             datos_guardados = merge_capture_values(datos_actuales, valores_a_guardar)
                             part.persona.datos_json = datos_guardados
                             flag_modified(part.persona, "datos_json")
-                            db.commit()
-                            st.success("✅ Datos guardados.")
-                            st.rerun()
+                            try:
+                                db.commit()
+                            except Exception:
+                                db.rollback()
+                                logging.exception(
+                                    "Failed to save capture data for participation %s",
+                                    part.id,
+                                )
+                                feedback = (
+                                    "error",
+                                    ["No se pudieron guardar los datos. No se confirmó el cambio. Inténtelo nuevamente."],
+                                )
+                            else:
+                                st.session_state["capture_feedback"] = (
+                                    part.id,
+                                    "success",
+                                    "Datos guardados correctamente.",
+                                )
+                                st.rerun()
+
+                    with st.container():
+                        if feedback:
+                            feedback_type, feedback_message = feedback
+                            if feedback_type == "success":
+                                st.success(feedback_message)
+                            else:
+                                st.error("\n".join(f"- {error}" for error in feedback_message))
+                        if campos_requeridos_pendientes:
+                            st.info(mensaje_bloqueo)
 
             # ==========================================
             # TAB 2: DOCUMENTOS ADJUNTOS
